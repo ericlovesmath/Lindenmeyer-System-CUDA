@@ -1,10 +1,5 @@
-.PHONY: all build run test clean
+.PHONY: all build render test clean
 MAKEFLAGS += --no-print-directory
-
-# Treat any extra args after `make run` as opaque values, not targets.
-RUN_ARGS := $(filter-out run,$(MAKECMDGOALS))
-%:
-	@:
 
 all: build
 
@@ -14,11 +9,12 @@ build/CMakeCache.txt:
 build: build/CMakeCache.txt
 	@cmake --build build -j
 
-run: build
-	@./build/lsystem $(RUN_ARGS)
+# CPU L-system demo
+render: build
+	@mkdir -p out && ./build/render out
 
 test: build
 	@ctest --test-dir build --output-on-failure
 
 clean:
-	rm -rf build
+	rm -rf build out
