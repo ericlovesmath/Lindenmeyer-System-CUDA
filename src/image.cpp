@@ -18,27 +18,58 @@ void set_pixel(image &img, int x, int y, color c) {
   img.rgb[i + 2] = c.b;
 }
 
-// Integer Bresenham line.
-void draw_line(image &img, int x0, int y0, int x1, int y1, color c) {
-  int dx = std::abs(x1 - x0);
-  int dy = -std::abs(y1 - y0);
-  int sx = x0 < x1 ? 1 : -1;
-  int sy = y0 < y1 ? 1 : -1;
-  int err = dx + dy;
-  while (true) {
-    set_pixel(img, x0, y0, c);
-    if (x0 == x1 && y0 == y1) {
-      break;
+// Alpha-blend `c` over pixel (x, y)
+void blend_pixel(image &img, int x, int y, color c, double alpha) {
+  if (x < 0 || x >= img.width || y < 0 || y >= img.height) {
+    return;
+  }
+  alpha = std::clamp(alpha, 0.0, 1.0);
+
+  auto mix = [alpha](uint8_t dst, uint8_t src) {
+    return static_cast<uint8_t>(std::lround(dst + (src - dst) * alpha));
+  };
+
+  size_t i = (static_cast<size_t>(y) * img.width + x) * 3;
+  img.rgb[i + 0] = mix(img.rgb[i + 0], c.r);
+  img.rgb[i + 1] = mix(img.rgb[i + 1], c.g);
+  img.rgb[i + 2] = mix(img.rgb[i + 2], c.b);
+}
+
+// Wu's Algorithm for Antialiased line
+void draw_line(image &img, double x0, double y0, double x1, double y1,
+               color c) {
+  bool steep = std::abs(y1 - y0) > std::abs(x1 - x0);
+  if (steep) {
+    std::swap(x0, y0);
+    std::swap(x1, y1);
+  }
+  if (x0 > x1) {
+    std::swap(x0, x1);
+    std::swap(y0, y1);
+  }
+
+  double dx = x1 - x0;
+  double gradient = dx == 0.0 ? 1.0 : (y1 - y0) / dx;
+
+  // Blend the two pixels straddling height y at column x
+  auto plot = [&](int x, double y) {
+    int iy = static_cast<int>(std::floor(y));
+    double frac = y - iy;
+    if (steep) {
+      blend_pixel(img, iy, x, c, 1.0 - frac);
+      blend_pixel(img, iy + 1, x, c, frac);
+    } else {
+      blend_pixel(img, x, iy, c, 1.0 - frac);
+      blend_pixel(img, x, iy + 1, c, frac);
     }
-    int e2 = 2 * err;
-    if (e2 >= dy) {
-      err += dy;
-      x0 += sx;
-    }
-    if (e2 <= dx) {
-      err += dx;
-      y0 += sy;
-    }
+  };
+
+  int start = static_cast<int>(std::round(x0));
+  int end = static_cast<int>(std::round(x1));
+  double y = y0 + gradient * (start - x0);
+  for (int x = start; x <= end; ++x) {
+    plot(x, y);
+    y += gradient;
   }
 }
 
@@ -85,10 +116,9 @@ void rasterize(const std::vector<segment> &segments, image &img,
   double off_y = margin + (avail_h - span_y * scale) / 2.0;
 
   auto to_pixel = [&](const pos &p) {
-    int px = static_cast<int>(std::lround(off_x + (p.x - min_x) * scale));
-    int py = static_cast<int>(
-        std::lround(img.height - 1 - (off_y + (p.y - min_y) * scale)));
-    return std::pair<int, int>{px, py};
+    double px = off_x + (p.x - min_x) * scale;
+    double py = img.height - 1 - (off_y + (p.y - min_y) * scale);
+    return std::pair<double, double>{px, py};
   };
 
   for (const segment &s : segments) {
