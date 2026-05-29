@@ -20,38 +20,39 @@ std::vector<segment> interpret(const std::string &commands,
                                const turtle_config &cfg) {
   const double delta = radians(cfg.angle_deg);
 
-  std::vector<segment> segments;
+  state t{{0.0, 0.0}, radians(cfg.start_heading_deg)};
   std::vector<state> stack;
-  state turtle{{0.0, 0.0}, radians(cfg.start_heading_deg)};
+  std::vector<segment> segments;
 
   for (char command : commands) {
     switch (command) {
     case 'F':
     case 'f': {
-      pos next{turtle.p.x + cfg.step * std::cos(turtle.heading),
-               turtle.p.y + cfg.step * std::sin(turtle.heading)};
+      pos start = t.p;
+      t.p.x += cfg.step * std::cos(t.heading);
+      t.p.y += cfg.step * std::sin(t.heading);
       if (command == 'F') {
-        segments.push_back({turtle.p, next});
+        segments.push_back({start, t.p});
       }
-      turtle.p = next;
       break;
     }
     case '+':
-      turtle.heading += delta;
+      t.heading += delta;
       break;
     case '-':
-      turtle.heading -= delta;
+      t.heading -= delta;
       break;
     case '[':
-      stack.push_back(turtle);
+      stack.push_back(t);
       break;
     case ']':
       if (!stack.empty()) {
-        turtle = stack.back();
+        t = stack.back();
         stack.pop_back();
       }
       break;
     default:
+      // Don't draw other characters
       break;
     }
   }

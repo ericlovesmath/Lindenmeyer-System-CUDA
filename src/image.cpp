@@ -7,23 +7,15 @@
 
 namespace {
 
-// Byte offset of pixel (x, y) in `rgb`
-size_t index(const image &img, int x, int y) {
-  return (static_cast<size_t>(y) * img.width + x) * 3;
-}
-
-// Write a color at byte offset i in the buffer.
-void put(image &img, size_t i, color c) {
-  img.rgb[i + 0] = c.r;
-  img.rgb[i + 1] = c.g;
-  img.rgb[i + 2] = c.b;
-}
-
+// Paint pixel (x, y), ignoring anything outside the image.
 void set_pixel(image &img, int x, int y, color c) {
   if (x < 0 || x >= img.width || y < 0 || y >= img.height) {
     return;
   }
-  put(img, index(img, x, y), c);
+  size_t i = (static_cast<size_t>(y) * img.width + x) * 3;
+  img.rgb[i + 0] = c.r;
+  img.rgb[i + 1] = c.g;
+  img.rgb[i + 2] = c.b;
 }
 
 // Integer Bresenham line.
@@ -55,8 +47,10 @@ void draw_line(image &img, int x0, int y0, int x1, int y1, color c) {
 image make_image(int width, int height, color background) {
   image img{width, height,
             std::vector<uint8_t>(static_cast<size_t>(width) * height * 3)};
-  for (size_t i = 0; i < img.rgb.size(); i += 3) {
-    put(img, i, background);
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      set_pixel(img, x, y, background);
+    }
   }
   return img;
 }
