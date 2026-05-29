@@ -1,3 +1,4 @@
+#include "examples.h"
 #include "lsystem.h"
 #include "turtle.h"
 
@@ -20,6 +21,11 @@ static void test_expand() {
   EXPECT_EQ(expand(plant, 1), std::string("-F+[[X]-X]-F[-FX]+X"));
 }
 
+static void test_examples() {
+  EXPECT_EQ(expand(dragon.sys, 1), std::string("FX+YF+"));
+  EXPECT_EQ(expand(hilbert.sys, 1), std::string("+YF-XFX-FY+"));
+}
+
 static void test_interpret() {
   turtle_config cfg{1.0, 90.0, 0.0};
 
@@ -36,6 +42,7 @@ static void test_interpret() {
 
 int main() {
   test_expand();
+  test_examples();
   test_interpret();
   std::printf("All tests passed.\n");
   return 0;

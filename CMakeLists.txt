@@ -13,11 +13,14 @@ add_library(lsystem_lib STATIC
   src/lsystem.cpp
   src/turtle.cpp
   src/image.cpp
+  src/examples.cpp
 )
 
-# render: the CPU rendering demo.  lsystem: CUDA toolchain smoke test.
 add_executable(render src/render_demo.cpp)
 target_link_libraries(render PRIVATE lsystem_lib)
+
+add_executable(bench src/bench.cpp)
+target_link_libraries(bench PRIVATE lsystem_lib)
 
 add_executable(lsystem src/main.cpp src/add_kernel.cu)
 

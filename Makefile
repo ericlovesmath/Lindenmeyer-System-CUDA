@@ -1,4 +1,4 @@
-.PHONY: all build render test clean
+.PHONY: all build render bench test clean
 MAKEFLAGS += --no-print-directory
 
 all: build
@@ -9,9 +9,11 @@ build/CMakeCache.txt:
 build: build/CMakeCache.txt
 	@cmake --build build -j
 
-# CPU L-system demo
 render: build
 	@mkdir -p out && ./build/render out
+
+bench: build
+	@./build/bench
 
 test: build
 	@ctest --test-dir build --output-on-failure
