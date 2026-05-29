@@ -1,19 +1,8 @@
 #include "add_kernel.h"
 
-#include <cstdio>
-#include <cstdlib>
+#include "check.h"
 
-#define EXPECT_EQ(a, b)                                                        \
-  do {                                                                         \
-    auto _va = (a);                                                            \
-    auto _vb = (b);                                                            \
-    if (_va != _vb) {                                                          \
-      std::fprintf(stderr, "FAIL %s:%d: %s == %s (%d vs %d)\n", __FILE__,      \
-                   __LINE__, #a, #b, (int)_va, (int)_vb);                      \
-      std::exit(1);                                                            \
-    }                                                                          \
-  } while (0)
-
+// Some tests just to make sure CUDA harness works
 int main() {
   EXPECT_EQ(add_with_cuda(2, 3), 5);
   EXPECT_EQ(add_with_cuda(0, 0), 0);
