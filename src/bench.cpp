@@ -1,5 +1,6 @@
 #include "examples.h"
 #include "lsystem.h"
+#include "lsystem_cuda.h"
 
 #include <algorithm>
 #include <chrono>
@@ -14,29 +15,32 @@ struct bench_case {
   int iterations;
 };
 
-constexpr char HEADER_FMT[] = "%-12s%-8s%-16s%-14s%-12s\n";
-constexpr char ROW_FMT[] = "%-12s%-8d%-16zu%-14.3f%-12.1f\n";
+constexpr char HEADER_FMT[] = "%-12s%-8s%-14s%-12s%-12s%-12s%-12s\n";
+constexpr char ROW_FMT[] = "%-12s%-8d%-14zu%-12.3f%-12.3f%-12.2f%-12.1f\n";
 
-// Returns the median wall-clock time in milliseconds over `reps` runs.
-double median_expand_ms(const l_system &sys, int iterations, int reps) {
+struct timing {
+  double median_ms;
+  std::size_t symbols;
+};
+
+// Times `run` `reps` times and reports the median time and the symbol count
+template <class Run> timing median_ms(Run run, int reps) {
   std::vector<double> samples;
   samples.reserve(reps);
+  std::size_t symbols = 0;
 
   for (int i = 0; i < reps; ++i) {
     auto t0 = std::chrono::steady_clock::now();
-    auto result = expand(sys, iterations);
+    auto result = run();
     auto t1 = std::chrono::steady_clock::now();
 
     samples.push_back(
         std::chrono::duration<double, std::milli>(t1 - t0).count());
-
-    // Using `result` so that it is not optimized away as dead code
-    if (result.empty())
-      std::puts("");
+    symbols = result.size();
   }
 
   std::sort(samples.begin(), samples.end());
-  return samples[samples.size() / 2];
+  return {samples[samples.size() / 2], symbols};
 }
 
 } // namespace
@@ -47,18 +51,32 @@ int main(int argc, char **argv) {
     reps = 1;
 
   const std::vector<bench_case> cases = {
-      {koch, 10}, {plant, 10}, {dragon, 20}, {hilbert, 9}, {sierpinski, 9},
+      {koch, 12},    {plant, 12},      {dragon, 24},
+      {hilbert, 12}, {sierpinski, 16}, {dragon, 24},
   };
 
-  std::printf("expand() benchmark, median of %d reps\n\n", reps);
-  std::printf(HEADER_FMT, "system", "iters", "symbols", "ms", "Msym/s");
-  std::printf(HEADER_FMT, "------", "-----", "-------", "----", "------");
+  std::printf("expand() CPU vs GPU benchmark, median of %d reps\n", reps);
+  std::printf("(gpu ms is end-to-end: H2D rule/axiom upload + kernels + D2H "
+              "result)\n\n");
+  std::printf(HEADER_FMT, "system", "iters", "symbols", "cpu ms", "gpu ms",
+              "speedup", "gpu Msym/s");
+  std::printf(HEADER_FMT, "------", "-----", "-------", "------", "------",
+              "-------", "----------");
 
   for (const bench_case &c : cases) {
-    std::size_t symbols = expand(c.ex.sys, c.iterations).size();
-    double ms = median_expand_ms(c.ex.sys, c.iterations, reps);
-    double msym_s = ms > 0.0 ? (symbols / 1e3) / ms : 0.0;
+    auto cpu_run = [&] { return expand(c.ex.sys, c.iterations); };
+    auto gpu_run = [&] { return expand_gpu(c.ex.sys, c.iterations); };
 
-    std::printf(ROW_FMT, c.ex.name.c_str(), c.iterations, symbols, ms, msym_s);
+    gpu_run(); // untimed warm-up
+
+    timing cpu = median_ms(cpu_run, reps);
+    timing gpu = median_ms(gpu_run, reps);
+
+    double speedup = gpu.median_ms > 0.0 ? cpu.median_ms / gpu.median_ms : 0.0;
+    double gpu_msym_s =
+        gpu.median_ms > 0.0 ? (gpu.symbols / 1e3) / gpu.median_ms : 0.0;
+
+    std::printf(ROW_FMT, c.ex.name.c_str(), c.iterations, cpu.symbols,
+                cpu.median_ms, gpu.median_ms, speedup, gpu_msym_s);
   }
 }
