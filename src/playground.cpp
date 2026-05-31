@@ -3,6 +3,7 @@
 #include "examples.h"
 #include "image.h"
 #include "lsystem.h"
+#include "lsystem_cuda.h"
 #include "turtle.h"
 
 #include "imgui.h"
@@ -11,6 +12,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 
@@ -64,13 +66,24 @@ int main() {
   // Latest rendered image
   image img = make_image(kCanvas, kCanvas, color{255, 255, 255});
   std::size_t symbols = 0, segments = 0;
+  double expand_ms = 0.0, turtle_ms = 0.0,
+         raster_ms = 0.0; // timing of last render
 
   auto render = [&] {
-    std::string commands = expand(plant.sys, iterations);
+    using clock = std::chrono::steady_clock;
+    using ms = std::chrono::duration<double, std::milli>;
+    auto t0 = clock::now();
+    std::string commands = expand_gpu(plant.sys, iterations);
+    auto t1 = clock::now();
     auto segs =
         interpret(commands, turtle_config{plant.cfg.step, angle, heading});
+    auto t2 = clock::now();
     img = make_image(kCanvas, kCanvas, color{255, 255, 255});
     rasterize(segs, img, plant.line);
+    auto t3 = clock::now();
+    expand_ms = ms(t1 - t0).count();
+    turtle_ms = ms(t2 - t1).count();
+    raster_ms = ms(t3 - t2).count();
 
     // Upload the fresh pixels into the existing texture
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -97,6 +110,10 @@ int main() {
     dirty |= ImGui::SliderFloat("start heading (deg)", &heading, 0.0f, 360.0f);
     ImGui::Separator();
     ImGui::Text("%zu symbols, %zu segments", symbols, segments);
+    ImGui::Text("GPU expand: %.3f ms", expand_ms);
+    ImGui::Text("turtle:     %.3f ms", turtle_ms);
+    ImGui::Text("raster:     %.3f ms", raster_ms);
+    ImGui::Text("total:      %.3f ms", expand_ms + turtle_ms + raster_ms);
     if (ImGui::Button("Save PPM (out/plant.ppm)"))
       write_ppm(img, "out/plant.ppm");
     ImGui::End();

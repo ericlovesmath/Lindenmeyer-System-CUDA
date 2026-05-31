@@ -78,9 +78,14 @@ void draw_line(image &img, double x0, double y0, double x1, double y1,
 image make_image(int width, int height, color background) {
   image img{width, height,
             std::vector<uint8_t>(static_cast<size_t>(width) * height * 3)};
-  for (int y = 0; y < height; ++y) {
-    for (int x = 0; x < width; ++x) {
-      set_pixel(img, x, y, background);
+  if (background.r == background.g && background.g == background.b) {
+    std::fill(img.rgb.begin(), img.rgb.end(), background.r);
+  } else {
+    // Write the 3-byte pattern directly, no per-pixel bounds checks
+    for (size_t i = 0; i < img.rgb.size(); i += 3) {
+      img.rgb[i + 0] = background.r;
+      img.rgb[i + 1] = background.g;
+      img.rgb[i + 2] = background.b;
     }
   }
   return img;
