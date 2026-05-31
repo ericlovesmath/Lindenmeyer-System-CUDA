@@ -23,6 +23,9 @@
 
 namespace {
 
+// Examples selectable from the playground UI, in display order.
+const example *examples[] = {&koch, &plant, &dragon, &hilbert, &sierpinski};
+
 void glfw_error_callback(int error, const char *desc) {
   std::fprintf(stderr, "GLFW error %d: %s\n", error, desc);
 }
@@ -180,10 +183,12 @@ int main() {
   line_renderer lines;
   lines.init();
 
-  // Editable parameters
-  int iterations = plant.iterations;
-  float angle = plant.cfg.angle_deg;
-  float heading = plant.cfg.start_heading_deg;
+  // The selected example and the editable parameters of the current one
+  int example_idx = 0;
+  const example *current = examples[example_idx];
+  int iterations = current->iterations;
+  float angle = current->cfg.angle_deg;
+  float heading = current->cfg.start_heading_deg;
 
   // Stats from the last recompute. raster_ms is an exponential moving average.
   std::size_t symbols = 0, segments = 0;
@@ -193,10 +198,10 @@ int main() {
     using clock = std::chrono::steady_clock;
     using ms = std::chrono::duration<double, std::milli>;
     auto t0 = clock::now();
-    std::string commands = expand_gpu(plant.sys, iterations);
+    std::string commands = expand_gpu(current->sys, iterations);
     auto t1 = clock::now();
     auto segs =
-        interpret(commands, turtle_config{plant.cfg.step, angle, heading});
+        interpret(commands, turtle_config{current->cfg.step, angle, heading});
     auto t2 = clock::now();
     lines.set_segments(segs);
     expand_ms = ms(t1 - t0).count();
@@ -205,8 +210,17 @@ int main() {
     segments = segs.size();
   };
 
+  // Reset the editable parameters to the selected example's defaults.
+  auto select_example = [&](int idx) {
+    example_idx = idx;
+    current = examples[idx];
+    iterations = current->iterations;
+    angle = current->cfg.angle_deg;
+    heading = current->cfg.start_heading_deg;
+  };
+
   // Warm up CUDA initialization
-  expand_gpu(plant.sys, 1);
+  expand_gpu(current->sys, 1);
   recompute();
 
   while (!glfwWindowShouldClose(window)) {
@@ -220,6 +234,18 @@ int main() {
     ImGui::SetNextWindowSize(ImVec2(380, 280), ImGuiCond_FirstUseEver);
     ImGui::Begin("Controls");
     ImGui::PushItemWidth(ImGui::CalcItemWidth() * 0.7f);
+    if (ImGui::BeginCombo("example", current->name.c_str())) {
+      for (int i = 0; i < static_cast<int>(std::size(examples)); ++i) {
+        bool selected = i == example_idx;
+        if (ImGui::Selectable(examples[i]->name.c_str(), selected)) {
+          select_example(i);
+          dirty = true;
+        }
+        if (selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
     dirty |= ImGui::SliderInt("iterations", &iterations, 0, 8);
     dirty |= ImGui::SliderFloat("angle (deg)", &angle, 0.0f, 180.0f);
     dirty |= ImGui::SliderFloat("heading (deg)", &heading, 0.0f, 360.0f);
@@ -230,7 +256,8 @@ int main() {
     ImGui::Text("turtle:     %.3f ms", turtle_ms);
     ImGui::Text("GPU raster: %.3f ms (avg)", raster_ms);
     ImGui::Text("total:      %.3f ms", expand_ms + turtle_ms + raster_ms);
-    bool save = ImGui::Button("Save PPM (out/plant.ppm)");
+    std::string ppm_path = "out/" + current->name + ".ppm";
+    bool save = ImGui::Button(("Save PPM (" + ppm_path + ")").c_str());
     ImGui::End();
 
     if (dirty) {
@@ -260,7 +287,7 @@ int main() {
                         .count();
     raster_ms = raster_ms == 0.0 ? sample : 0.9 * raster_ms + 0.1 * sample;
     if (save)
-      save_ppm(x0, y0, s, "out/plant.ppm");
+      save_ppm(x0, y0, s, ppm_path);
     glDisable(GL_SCISSOR_TEST);
 
     // Dear ImGui draws on top of the canvas.
