@@ -1,4 +1,4 @@
-.PHONY: all build render bench test clean
+.PHONY: all build render playground bench test clean
 MAKEFLAGS += --no-print-directory
 
 all: build
@@ -11,6 +11,9 @@ build: build/CMakeCache.txt
 
 render: build
 	@mkdir -p out && ./build/render out
+
+playground: build
+	@mkdir -p out && ./build/playground
 
 bench: build
 	@./build/bench
