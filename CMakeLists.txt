@@ -44,7 +44,7 @@ add_executable(playground
   ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
   ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp)
 target_include_directories(playground PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-target_link_libraries(playground PRIVATE lsystem_lib OpenGL::GL glfw)
+target_link_libraries(playground PRIVATE lsystem_lib lsystem_gpu OpenGL::GL glfw)
 
 add_executable(bench src/bench.cpp)
 target_link_libraries(bench PRIVATE lsystem_lib lsystem_gpu)
