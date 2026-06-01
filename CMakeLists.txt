@@ -14,21 +14,22 @@ set(CMAKE_CUDA_ARCHITECTURES native)
 include_directories(src)
 
 # CPU L-system
-add_library(lsystem_lib STATIC
-  src/lsystem.cpp
-  src/turtle.cpp
-  src/image.cpp
-  src/examples.cpp
+add_library(lsystem_cpu STATIC
+  src/cpu/lsystem.cpp
+  src/cpu/turtle.cpp
+  src/cpu/image.cpp
+  src/cpu/examples.cpp
 )
 
-# GPU L-system expansion and transform engine
+# GPU L-system expansion and transform engine.
 add_library(lsystem_gpu STATIC
-  src/lsystem_cuda.cu
-  src/transform_cuda.cu
+  src/gpu/lsystem_gpu.cu
+  src/gpu/transform_gpu.cu
 )
+target_link_libraries(lsystem_gpu PRIVATE lsystem_cpu)
 
-add_executable(render src/render_demo.cpp)
-target_link_libraries(render PRIVATE lsystem_lib)
+add_executable(render src/app/render_demo.cpp)
+target_link_libraries(render PRIVATE lsystem_cpu)
 
 # Interactive ImGui playground
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui)
@@ -42,25 +43,21 @@ find_package(glfw3 REQUIRED)
 # Glob the GLFW and OpenGL dependencies explicitly
 file(GLOB IMGUI_SRC CONFIGURE_DEPENDS ${IMGUI_DIR}/*.cpp)
 add_executable(playground
-  src/playground.cpp
+  src/app/playground.cpp
   ${IMGUI_SRC}
   ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
   ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp)
 target_include_directories(playground PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-target_link_libraries(playground PRIVATE lsystem_lib lsystem_gpu OpenGL::GL glfw)
+target_link_libraries(playground PRIVATE lsystem_cpu lsystem_gpu OpenGL::GL glfw)
 
-add_executable(bench src/bench.cpp)
-target_link_libraries(bench PRIVATE lsystem_lib lsystem_gpu)
+add_executable(bench src/app/bench.cpp)
+target_link_libraries(bench PRIVATE lsystem_cpu lsystem_gpu)
 
 enable_testing()
-add_executable(test_lsystem tests/test_lsystem.cpp)
-target_link_libraries(test_lsystem PRIVATE lsystem_lib)
-add_test(NAME test_lsystem COMMAND test_lsystem)
+add_executable(test_expand tests/test_expand.cpp)
+target_link_libraries(test_expand PRIVATE lsystem_cpu lsystem_gpu)
+add_test(NAME test_expand COMMAND test_expand)
 
-add_executable(test_lsystem_cuda tests/test_lsystem_cuda.cpp)
-target_link_libraries(test_lsystem_cuda PRIVATE lsystem_lib lsystem_gpu)
-add_test(NAME test_lsystem_cuda COMMAND test_lsystem_cuda)
-
-add_executable(test_transform_cuda tests/test_transform_cuda.cpp)
-target_link_libraries(test_transform_cuda PRIVATE lsystem_lib lsystem_gpu)
-add_test(NAME test_transform_cuda COMMAND test_transform_cuda)
+add_executable(test_interpret tests/test_interpret.cpp)
+target_link_libraries(test_interpret PRIVATE lsystem_cpu lsystem_gpu)
+add_test(NAME test_interpret COMMAND test_interpret)
