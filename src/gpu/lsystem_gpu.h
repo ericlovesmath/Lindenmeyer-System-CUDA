@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lsystem.h"
+#include "core/lsystem_types.h"
 
 #include <string>
 

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "image.h"
-#include "lsystem.h"
-#include "turtle.h"
+#include "core/lsystem_types.h"
+#include "core/turtle_types.h"
+#include "cpu/image.h"
 
 #include <string>
 

@@ -1,4 +1,6 @@
-#include "transform_cuda.h"
+#include "gpu/transform_gpu.h"
+
+#include "cpu/turtle.h" // CPU interpret() fallback for bracketed systems
 
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>

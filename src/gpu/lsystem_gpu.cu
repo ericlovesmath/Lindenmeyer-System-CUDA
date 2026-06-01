@@ -1,6 +1,6 @@
-#include "lsystem_cuda.h"
+#include "gpu/lsystem_gpu.h"
 
-#include "cuda_check.h"
+#include "gpu/cuda_check.h"
 
 #include <cuda_runtime.h>
 #include <thrust/execution_policy.h>

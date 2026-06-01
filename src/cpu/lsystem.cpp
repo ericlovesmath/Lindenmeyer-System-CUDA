@@ -1,4 +1,4 @@
-#include "lsystem.h"
+#include "cpu/lsystem.h"
 
 namespace {
 

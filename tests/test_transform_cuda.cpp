@@ -1,7 +1,7 @@
-#include "examples.h"
-#include "lsystem.h"
-#include "transform_cuda.h"
-#include "turtle.h"
+#include "cpu/examples.h"
+#include "cpu/lsystem.h"
+#include "cpu/turtle.h"
+#include "gpu/transform_gpu.h"
 
 #include "check.h"
 

@@ -1,4 +1,4 @@
-#include "examples.h"
+#include "cpu/examples.h"
 
 // Koch snowflake
 const example koch{

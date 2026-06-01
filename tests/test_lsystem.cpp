@@ -1,6 +1,6 @@
-#include "examples.h"
-#include "lsystem.h"
-#include "turtle.h"
+#include "cpu/examples.h"
+#include "cpu/lsystem.h"
+#include "cpu/turtle.h"
 
 #include "check.h"
 

@@ -1,6 +1,6 @@
-#include "examples.h"
-#include "lsystem.h"
-#include "lsystem_cuda.h"
+#include "cpu/examples.h"
+#include "cpu/lsystem.h"
+#include "gpu/lsystem_gpu.h"
 
 #include "check.h"
 

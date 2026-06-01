@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "turtle.h"
+#include "core/turtle_types.h"
 
 struct color {
   uint8_t r, g, b;

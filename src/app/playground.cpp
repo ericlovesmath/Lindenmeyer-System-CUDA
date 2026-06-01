@@ -3,11 +3,11 @@
 #define GL_GLEXT_PROTOTYPES
 #define GLFW_INCLUDE_GLEXT
 
-#include "examples.h"
-#include "image.h"
-#include "lsystem_cuda.h"
-#include "transform_cuda.h"
-#include "turtle.h"
+#include "cpu/examples.h"
+#include "cpu/image.h"
+#include "cpu/turtle.h"
+#include "gpu/lsystem_gpu.h"
+#include "gpu/transform_gpu.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
