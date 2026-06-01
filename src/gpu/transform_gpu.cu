@@ -1,8 +1,11 @@
 #include "gpu/transform_gpu.h"
 
-#include "cpu/turtle.h" // CPU interpret() fallback for bracketed systems
+#include "cpu/turtle.h"      // CPU interpret() fallback for bracketed systems
+#include "gpu/cuda_check.h"  // check(), device_alloc(), download()
+#include "gpu/lsystem_gpu.h" // to_device() for the host-string convenience
 
 #include <thrust/copy.h>
+#include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/transform_iterator.h>
@@ -66,39 +69,46 @@ struct is_forward {
 
 } // namespace
 
-std::vector<segment> interpret_gpu(const std::string &commands,
-                                   const turtle_config &cfg) {
-  // Bracketed systems need a turtle stack the linear scan cannot model
-  // TODO: Work on bracketed as well
-  if (commands.find_first_of("[]") != std::string::npos) {
-    return interpret(commands, cfg);
-  }
-
+device_buffer<segment>
+interpret_device(const device_buffer<unsigned char> &commands,
+                 const turtle_config &cfg) {
+  const int n = commands.size;
   const double delta = radians(cfg.angle_deg),
                h = radians(cfg.start_heading_deg);
   const to_local local{cfg.step, std::cos(delta), std::sin(delta)};
   const affine2 init{std::cos(h), std::sin(h), 0.0, 0.0};
 
-  // Initialization
-  static auto &in = *new thrust::device_vector<unsigned char>();
-  static auto &world = *new thrust::device_vector<affine2>();
-  static auto &segs = *new thrust::device_vector<segment>();
-  in.assign(commands.begin(), commands.end());
-  const int n = static_cast<int>(in.size());
-  world.resize(n);
-  segs.resize(n);
+  auto in = thrust::device_pointer_cast(commands.data);
+  thrust::device_vector<affine2> world(n);
 
-  // world[i], exclusive prefix product of the per-symbol local transforms.
-  auto locals = thrust::make_transform_iterator(in.begin(), local);
+  // Output buffer holds at most n forward segments
+  segment *out = device_alloc<segment>(n);
+  auto d_out = thrust::device_pointer_cast(out);
+
+  // world[i] = exclusive prefix product of the per-symbol local transforms.
+  auto locals = thrust::make_transform_iterator(in, local);
   thrust::exclusive_scan(thrust::cuda::par_nosync, locals, locals + n,
                          world.begin(), init, compose{});
-
   auto frames =
       thrust::make_transform_iterator(world.begin(), to_segment{cfg.step});
-  auto end = thrust::copy_if(frames, frames + n, in.begin(), segs.begin(),
-                             is_forward{});
+  auto end = thrust::copy_if(frames, frames + n, in, d_out, is_forward{});
 
-  std::vector<segment> out(end - segs.begin());
-  thrust::copy(segs.begin(), end, out.begin());
+  check(cudaDeviceSynchronize(), "sync");
+  return {out, static_cast<int>(end - d_out)};
+}
+
+std::vector<segment> to_host(const device_buffer<segment> &buf) {
+  std::vector<segment> out(buf.size);
+  download(out.data(), buf.data, buf.size);
   return out;
+}
+
+std::vector<segment> interpret_gpu(const std::string &commands,
+                                   const turtle_config &cfg) {
+  // Bracketed systems need a turtle stack the linear scan cannot model.
+  // TODO: Work on bracketed as well.
+  if (commands.find_first_of("[]") != std::string::npos) {
+    return interpret(commands, cfg); // CPU fallback
+  }
+  return to_host(interpret_device(to_device(commands), cfg));
 }

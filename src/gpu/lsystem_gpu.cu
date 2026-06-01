@@ -17,29 +17,6 @@ constexpr int BLOCK = 256;
 
 int grid_for(int n) { return (n + BLOCK - 1) / BLOCK; }
 
-// Allocate `count` of `T` elements on the device, user calls `cudaFree`
-template <typename T> T *device_alloc(std::size_t count) {
-  T *p = nullptr;
-  check(cudaMalloc(&p, sizeof(T) * (count > 0 ? count : 1)), "cudaMalloc");
-  return p;
-}
-
-// Copies host to to device
-template <typename T> void upload(T *dst, const T *src, std::size_t count) {
-  if (count > 0) {
-    check(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyHostToDevice),
-          "cudaMemcpy H2D");
-  }
-}
-
-// Copies device to host
-template <typename T> void download(T *dst, const T *src, std::size_t count) {
-  if (count > 0) {
-    check(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyDeviceToHost),
-          "cudaMemcpy D2H");
-  }
-}
-
 // Launch a grid-strided kernel over `n` items and check
 template <typename Kernel, typename... Args>
 void launch(const char *name, Kernel kernel, int n, Args... args) {
@@ -106,9 +83,8 @@ __global__ void scatter_kernel(const unsigned char *in, int n,
   }
 }
 
-// Rewrite `in` (n symbols) once and return the new device buffer
-// New length is written to *out_n
-// The caller still owns `in`
+// Rewrite `in` (n symbols) once into a new device buffer (caller owns both).
+// The new length is written to *out_n.
 unsigned char *expand_step(const unsigned char *in, int n,
                            const device_rules &rules, int *out_n) {
   int *len = device_alloc<int>(n);
@@ -137,21 +113,36 @@ unsigned char *expand_step(const unsigned char *in, int n,
 
 } // namespace
 
-std::string expand_gpu(const l_system &sys, int iterations) {
+void device_free(void *p) noexcept { cudaFree(p); }
+
+device_buffer<unsigned char> to_device(const std::string &s) {
+  const int n = static_cast<int>(s.size());
+  unsigned char *d = device_alloc<unsigned char>(n);
+  upload(d, reinterpret_cast<const unsigned char *>(s.data()), n);
+  return {d, n};
+}
+
+std::string to_host(const device_buffer<unsigned char> &buf) {
+  std::string out(buf.size, '\0');
+  download(reinterpret_cast<unsigned char *>(out.data()), buf.data, buf.size);
+  return out;
+}
+
+device_buffer<unsigned char> expand_device(const l_system &sys,
+                                           int iterations) {
   rule_table t = build_rule_table(sys);
 
-  // Upload the rule table once
+  // Upload the rule table and axiom, then rewrite in place on the device.
   device_rules rules{device_alloc<int>(ALPHABET), device_alloc<int>(ALPHABET),
                      device_alloc<char>(t.data.size())};
+  int n = static_cast<int>(sys.axiom.size());
+  unsigned char *cur = device_alloc<unsigned char>(n);
   upload(rules.off, t.off.data(), ALPHABET);
   upload(rules.len, t.len.data(), ALPHABET);
   upload(rules.data, t.data.data(), t.data.size());
-
-  // Current string lives in `cur`, each step hands back a freshly sized buffer
-  int n = static_cast<int>(sys.axiom.size());
-  unsigned char *cur = device_alloc<unsigned char>(n);
   upload(cur, reinterpret_cast<const unsigned char *>(sys.axiom.data()), n);
 
+  // Each step hands back a freshly sized buffer.
   for (int it = 0; it < iterations && n > 0; ++it) {
     int next_n = 0;
     unsigned char *next = expand_step(cur, n, rules, &next_n);
@@ -160,14 +151,13 @@ std::string expand_gpu(const l_system &sys, int iterations) {
     n = next_n;
   }
 
-  check(cudaDeviceSynchronize(), "sync");
-
-  std::string result(n, '\0');
-  download(reinterpret_cast<unsigned char *>(result.data()), cur, n);
-
-  cudaFree(cur);
   cudaFree(rules.off);
   cudaFree(rules.len);
   cudaFree(rules.data);
-  return result;
+  check(cudaDeviceSynchronize(), "sync"); // result is ready when we return
+  return {cur, n};
+}
+
+std::string expand_gpu(const l_system &sys, int iterations) {
+  return to_host(expand_device(sys, iterations));
 }
