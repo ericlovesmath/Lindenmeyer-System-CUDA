@@ -2,7 +2,7 @@
 
 // Koch snowflake
 const example koch{
-    "koch", {"F++F++F", {{'F', "F-F++F-F"}}}, 4, {1.0, 60.0, 0.0}, {0, 0, 0}};
+    "koch", {"F++F++F", {{'F', "F-F++F-F"}}}, 8, {1.0, 60.0, 0.0}, {0, 0, 0}};
 
 // Fractal plant
 const example plant{"plant",
@@ -21,13 +21,13 @@ const example dragon{"dragon",
 // Hilbert space-filling curve
 const example hilbert{"hilbert",
                       {"X", {{'X', "+YF-XFX-FY+"}, {'Y', "-XF+YFY+FX-"}}},
-                      6,
+                      9,
                       {1.0, 90.0, 0.0},
                       {30, 60, 160}};
 
 // Sierpinski arrowhead curve
 const example sierpinski{"sierpinski",
                          {"XF", {{'X', "YF+XF+Y"}, {'Y', "XF-YF-X"}}},
-                         7,
+                         11,
                          {1.0, 60.0, 0.0},
                          {0, 0, 0}};

@@ -6,6 +6,7 @@
 #include "examples.h"
 #include "image.h"
 #include "lsystem_cuda.h"
+#include "transform_cuda.h"
 #include "turtle.h"
 
 #include "imgui.h"
@@ -183,12 +184,17 @@ int main() {
   line_renderer lines;
   lines.init();
 
+  // Cap the iterations slider: koch grows 4x/iter, so 10 is ~3M segments
+  // (~90 ms GPU / ~200 ms CPU) while 11 jumps to ~12M and stalls for ~1 s.
+  constexpr int MAX_ITERS = 10;
+
   // The selected example and the editable parameters of the current one
   int example_idx = 0;
   const example *current = examples[example_idx];
-  int iterations = current->iterations;
+  int iterations = std::min(current->iterations, MAX_ITERS);
   float angle = current->cfg.angle_deg;
   float heading = current->cfg.start_heading_deg;
+  bool gpu_transform = true; // GPU prefix-scan turtle (non-bracketed only)
 
   // Stats from the last recompute. raster_ms is an exponential moving average.
   std::size_t symbols = 0, segments = 0;
@@ -200,8 +206,10 @@ int main() {
     auto t0 = clock::now();
     std::string commands = expand_gpu(current->sys, iterations);
     auto t1 = clock::now();
+    turtle_config cfg{current->cfg.step, angle, heading};
+    // interpret_gpu falls back to interpret() for bracketed systems.
     auto segs =
-        interpret(commands, turtle_config{current->cfg.step, angle, heading});
+        gpu_transform ? interpret_gpu(commands, cfg) : interpret(commands, cfg);
     auto t2 = clock::now();
     lines.set_segments(segs);
     expand_ms = ms(t1 - t0).count();
@@ -214,7 +222,7 @@ int main() {
   auto select_example = [&](int idx) {
     example_idx = idx;
     current = examples[idx];
-    iterations = current->iterations;
+    iterations = std::min(current->iterations, MAX_ITERS);
     angle = current->cfg.angle_deg;
     heading = current->cfg.start_heading_deg;
   };
@@ -246,14 +254,16 @@ int main() {
       }
       ImGui::EndCombo();
     }
-    dirty |= ImGui::SliderInt("iterations", &iterations, 0, 8);
+    dirty |= ImGui::SliderInt("iterations", &iterations, 0, MAX_ITERS);
     dirty |= ImGui::SliderFloat("angle (deg)", &angle, 0.0f, 180.0f);
     dirty |= ImGui::SliderFloat("heading (deg)", &heading, 0.0f, 360.0f);
+    dirty |= ImGui::Checkbox("GPU transform (non-bracketed)", &gpu_transform);
     ImGui::PopItemWidth();
     ImGui::Separator();
     ImGui::Text("%zu symbols, %zu segments", symbols, segments);
     ImGui::Text("GPU expand: %.3f ms", expand_ms);
-    ImGui::Text("turtle:     %.3f ms", turtle_ms);
+    ImGui::Text("turtle:     %.3f ms (%s)", turtle_ms,
+                gpu_transform ? "GPU" : "CPU");
     ImGui::Text("GPU raster: %.3f ms (avg)", raster_ms);
     ImGui::Text("total:      %.3f ms", expand_ms + turtle_ms + raster_ms);
     std::string ppm_path = "out/" + current->name + ".ppm";
