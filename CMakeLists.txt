@@ -21,8 +21,11 @@ add_library(lsystem_lib STATIC
   src/examples.cpp
 )
 
-# GPU L-system expansion
-add_library(lsystem_gpu STATIC src/lsystem_cuda.cu)
+# GPU L-system expansion and transform engine
+add_library(lsystem_gpu STATIC
+  src/lsystem_cuda.cu
+  src/transform_cuda.cu
+)
 
 add_executable(render src/render_demo.cpp)
 target_link_libraries(render PRIVATE lsystem_lib)
@@ -57,3 +60,7 @@ add_test(NAME test_lsystem COMMAND test_lsystem)
 add_executable(test_lsystem_cuda tests/test_lsystem_cuda.cpp)
 target_link_libraries(test_lsystem_cuda PRIVATE lsystem_lib lsystem_gpu)
 add_test(NAME test_lsystem_cuda COMMAND test_lsystem_cuda)
+
+add_executable(test_transform_cuda tests/test_transform_cuda.cpp)
+target_link_libraries(test_transform_cuda PRIVATE lsystem_lib lsystem_gpu)
+add_test(NAME test_transform_cuda COMMAND test_transform_cuda)
