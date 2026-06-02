@@ -1,7 +1,7 @@
 #include "cpu/examples.h"
 #include "cpu/image.h"
-#include "cpu/lsystem.h"
-#include "cpu/turtle.h"
+#include "cpu/expand.h"
+#include "cpu/interpret.h"
 
 #include <iostream>
 #include <string>

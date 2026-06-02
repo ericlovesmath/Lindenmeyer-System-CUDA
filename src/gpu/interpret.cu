@@ -1,7 +1,7 @@
-#include "gpu/transform_gpu.h"
+#include "gpu/interpret.h"
 
 #include "gpu/cuda_check.h"  // check(), device_alloc(), download()
-#include "gpu/lsystem_gpu.h" // to_device() for the host-string convenience
+#include "gpu/expand.h" // to_device() for the host-string convenience
 
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>

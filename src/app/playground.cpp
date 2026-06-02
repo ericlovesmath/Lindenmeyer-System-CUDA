@@ -6,8 +6,8 @@
 #include "cpu/examples.h"
 #include "cpu/image.h"
 #include "gpu/gl_interop.h"
-#include "gpu/lsystem_gpu.h"
-#include "gpu/transform_gpu.h"
+#include "gpu/expand.h"
+#include "gpu/interpret.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"

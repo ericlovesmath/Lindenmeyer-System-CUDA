@@ -1,4 +1,4 @@
-#include "gpu/lsystem_gpu.h"
+#include "gpu/expand.h"
 
 #include "gpu/cuda_check.h"
 

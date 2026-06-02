@@ -1,8 +1,8 @@
 #include "cpu/examples.h"
-#include "cpu/lsystem.h"
-#include "cpu/turtle.h"
-#include "gpu/lsystem_gpu.h"
-#include "gpu/transform_gpu.h"
+#include "cpu/expand.h"
+#include "cpu/interpret.h"
+#include "gpu/expand.h"
+#include "gpu/interpret.h"
 
 #include <algorithm>
 #include <chrono>
