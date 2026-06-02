@@ -6,16 +6,12 @@
 #include <string>
 #include <vector>
 
-// Axis-aligned bounding box of drawn geometry
-struct bounds2 {
-  float min_x, min_y, max_x, max_y;
-};
-
-// Instance frames of every drawn with their GPU-computed bounds
+// Instance frames of every drawn with their GPU-computed bounds (bounds3 lives
+// in core/turtle_types.h so the renderer/camera can use it without this header)
 struct frames_view {
   const gpu_frame *data;
   int count;
-  bounds2 bbox;
+  bounds3 bbox;
 };
 
 // Download device segments back to the host

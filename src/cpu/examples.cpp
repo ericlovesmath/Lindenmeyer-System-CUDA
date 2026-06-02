@@ -31,3 +31,11 @@ const example sierpinski{"sierpinski",
                          11,
                          {1.0, 60.0, 0.0},
                          {0, 0, 0}};
+
+// 3D bush(ABOP fig. 1.25)
+const example bush{"bush",
+                   {"A", {{'A', "[&FA]/////[&FA]///////[&FA]"}, {'F', "FF"}}},
+                   6,
+                   {1.0, 22.5, 90.0},
+                   {70, 120, 40},
+                   true};

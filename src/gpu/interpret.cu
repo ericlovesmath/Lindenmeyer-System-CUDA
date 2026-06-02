@@ -1,7 +1,9 @@
 #include "gpu/interpret.h"
 
-#include "gpu/cuda_check.h"  // check(), device_alloc(), download()
-#include "gpu/expand.h" // to_device() for the host-string convenience
+#include "gpu/cuda_check.h" // check(), device_alloc(), download()
+#include "gpu/expand.h"     // to_device() for the host-string convenience
+
+#include "core/quat.h"
 
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
@@ -55,34 +57,55 @@ template <class T> thrust::device_ptr<T> dptr(T *p) {
 }
 const auto par = thrust::cuda::par_nosync;
 
-// A 2D rigid transform acting on a point
-struct affine2 {
-  double c, s, tx, ty;
+// Turtle local frame axes
+__host__ __device__ constexpr vec3 HEADING() { return {1.0, 0.0, 0.0}; }
+__host__ __device__ constexpr vec3 LEFT() { return {0.0, 1.0, 0.0}; }
+__host__ __device__ constexpr vec3 UP() { return {0.0, 0.0, 1.0}; }
+
+// A rigid transform in SE(3)
+struct frame3 {
+  quat q;
+  double px, py, pz;
 };
 
-// Compose two transforms
+// Compose two transforms (a applied after b on the left; non-commutative).
 struct compose {
-  __host__ __device__ affine2 operator()(const affine2 &a,
-                                         const affine2 &b) const {
-    return {a.c * b.c - a.s * b.s, a.s * b.c + a.c * b.s,
-            a.c * b.tx - a.s * b.ty + a.tx, a.s * b.tx + a.c * b.ty + a.ty};
+  __host__ __device__ frame3 operator()(const frame3 &a,
+                                        const frame3 &b) const {
+    vec3 rb = qrotate(a.q, {b.px, b.py, b.pz});
+    return {qmul(a.q, b.q), a.px + rb.x, a.py + rb.y, a.pz + rb.z};
   }
 };
 
+// A pure local rotation about a turtle axis (no translation).
+__host__ __device__ inline frame3 rot(vec3 axis, double angle) {
+  return {quat_axis_angle(axis, angle), 0.0, 0.0, 0.0};
+}
+
 // Map a symbol to its local transform
 struct to_local {
-  double step, cos_d, sin_d;
-  __host__ __device__ affine2 operator()(unsigned char ch) const {
+  double step, delta;
+  __host__ __device__ frame3 operator()(unsigned char ch) const {
     switch (ch) {
     case 'F':
     case 'f':
-      return {1.0, 0.0, step, 0.0};
+      return {{1.0, 0.0, 0.0, 0.0}, step, 0.0, 0.0};
     case '+':
-      return {cos_d, sin_d, 0.0, 0.0};
+      return rot(UP(), delta);
     case '-':
-      return {cos_d, -sin_d, 0.0, 0.0};
+      return rot(UP(), -delta);
+    case '&':
+      return rot(LEFT(), delta);
+    case '^':
+      return rot(LEFT(), -delta);
+    case '/':
+      return rot(HEADING(), delta);
+    case '\\':
+      return rot(HEADING(), -delta);
+    case '|':
+      return rot(UP(), 3.14159265358979323846);
     default:
-      return {1.0, 0.0, 0.0, 0.0}; // identity
+      return {{1.0, 0.0, 0.0, 0.0}, 0.0, 0.0, 0.0};
     }
   }
 };
@@ -90,16 +113,21 @@ struct to_local {
 // Turn a turtle frame into the segment a forward step would draw from it
 struct to_segment {
   double step;
-  __host__ __device__ segment operator()(const affine2 &w) const {
-    return {{w.tx, w.ty}, {w.tx + step * w.c, w.ty + step * w.s}};
+  __host__ __device__ segment operator()(const frame3 &w) const {
+    vec3 h = qrotate(w.q, HEADING());
+    return {{w.px, w.py, w.pz},
+            {w.px + step * h.x, w.py + step * h.y, w.pz + step * h.z}};
   }
 };
 
 // Narrow a turtle frame to a float OpenGL instance attribute
 struct to_frame {
-  __host__ __device__ gpu_frame operator()(const affine2 &w) const {
-    return {static_cast<float>(w.tx), static_cast<float>(w.ty),
-            static_cast<float>(w.c), static_cast<float>(w.s)};
+  __host__ __device__ gpu_frame operator()(const frame3 &w) const {
+    quat q = quat_normalize(w.q);
+    return {static_cast<float>(w.px), static_cast<float>(w.py),
+            static_cast<float>(w.pz), static_cast<float>(q.x),
+            static_cast<float>(q.y),  static_cast<float>(q.z),
+            static_cast<float>(q.w)};
   }
 };
 
@@ -110,12 +138,12 @@ struct is_forward {
 };
 
 void scan_world(const device_buffer<unsigned char> &commands,
-                const turtle_config &cfg, affine2 *world) {
+                const turtle_config &cfg, frame3 *world) {
   const int n = commands.size;
   const double delta = radians(cfg.angle_deg),
                h = radians(cfg.start_heading_deg);
-  const to_local local{cfg.step, std::cos(delta), std::sin(delta)};
-  const affine2 init{std::cos(h), std::sin(h), 0.0, 0.0};
+  const to_local local{cfg.step, delta};
+  const frame3 init{quat_axis_angle(UP(), h), 0.0, 0.0, 0.0};
   auto locals = thrust::make_transform_iterator(dptr(commands.data), local);
   thrust::exclusive_scan(par, locals, locals + n, dptr(world), init, compose{});
 }
@@ -142,23 +170,23 @@ template <class T> T *grow(device_buffer<T> &b, int n) {
 
 // Scratch reused across calls so a recompute allocates nothing
 struct scratch {
-  device_buffer<affine2> world;    // scan output
+  device_buffer<frame3> world;     // scan output
   device_buffer<gpu_frame> frames; // compacted F frames (fallback)
   gpu_frame *host = nullptr;       // pinned D2H staging (fallback)
   int host_cap = 0;
 
   // Bracketed-turtle temporaries (see scan_world_bracketed)
-  device_buffer<int> depth;          // bracket nesting depth
-  device_buffer<long long> qkey;     // per-symbol (level, position) lookup key
-  device_buffer<int> qidx;           // lower_bound of qkey in the open keys
-  device_buffer<int> openpos;        // '[' positions, sorted by openkey
-  device_buffer<long long> openkey;  // (level, position) key per '['
-  device_buffer<int> branch;         // innermost enclosing '[' (ROOT = -1)
-  device_buffer<int> skey, order;    // branch ids + permutation that sorts them
-  device_buffer<affine2> sorted;     // locals in branch order, scanned in place
-  device_buffer<affine2> prefix;     // within-branch prefix P, original order
-  device_buffer<affine2> accA, accB; // pointer-doubling entry accumulator
-  device_buffer<int> jumpA, jumpB;   // pointer-doubling parent jump
+  device_buffer<int> depth;         // bracket nesting depth
+  device_buffer<long long> qkey;    // per-symbol (level, position) lookup key
+  device_buffer<int> qidx;          // lower_bound of qkey in the open keys
+  device_buffer<int> openpos;       // '[' positions, sorted by openkey
+  device_buffer<long long> openkey; // (level, position) key per '['
+  device_buffer<int> branch;        // innermost enclosing '[' (ROOT = -1)
+  device_buffer<int> skey, order;   // branch ids + permutation that sorts them
+  device_buffer<frame3> sorted;     // locals in branch order, scanned in place
+  device_buffer<frame3> prefix;     // within-branch prefix P, original order
+  device_buffer<frame3> accA, accB; // pointer-doubling entry accumulator
+  device_buffer<int> jumpA, jumpB;  // pointer-doubling parent jump
 
   ~scratch() { pinned_free(host); }
 
@@ -177,32 +205,38 @@ scratch &g = *new scratch();
 // Bounding box of the segment a frame draws (both endpoints).
 struct frame_extent {
   float step;
-  __host__ __device__ bounds2 operator()(const gpu_frame &f) const {
-    float ex = f.tx + step * f.c, ey = f.ty + step * f.s;
-    return {fminf(f.tx, ex), fminf(f.ty, ey), fmaxf(f.tx, ex), fmaxf(f.ty, ey)};
+  __host__ __device__ bounds3 operator()(const gpu_frame &f) const {
+    quat q{f.qw, f.qx, f.qy, f.qz};
+    vec3 h = qrotate(q, HEADING());
+    float ex = f.px + step * static_cast<float>(h.x);
+    float ey = f.py + step * static_cast<float>(h.y);
+    float ez = f.pz + step * static_cast<float>(h.z);
+    return {fminf(f.px, ex), fminf(f.py, ey), fminf(f.pz, ez),
+            fmaxf(f.px, ex), fmaxf(f.py, ey), fmaxf(f.pz, ez)};
   }
 };
 
 struct bounds_union {
-  __host__ __device__ bounds2 operator()(const bounds2 &a,
-                                         const bounds2 &b) const {
+  __host__ __device__ bounds3 operator()(const bounds3 &a,
+                                         const bounds3 &b) const {
     return {fminf(a.min_x, b.min_x), fminf(a.min_y, b.min_y),
-            fmaxf(a.max_x, b.max_x), fmaxf(a.max_y, b.max_y)};
+            fminf(a.min_z, b.min_z), fmaxf(a.max_x, b.max_x),
+            fmaxf(a.max_y, b.max_y), fmaxf(a.max_z, b.max_z)};
   }
 };
 
 // Bounding box of the geometry `count` frames draw (a GPU reduction).
-bounds2 frames_bounds(const gpu_frame *frames, int count, float step) {
+bounds3 frames_bounds(const gpu_frame *frames, int count, float step) {
   if (count == 0)
-    return {0.0f, 0.0f, 0.0f, 0.0f};
-  const bounds2 init{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+    return {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  const bounds3 init{FLT_MAX, FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX, -FLT_MAX};
   auto p = thrust::device_pointer_cast(frames);
   return thrust::transform_reduce(thrust::cuda::par, p, p + count,
                                   frame_extent{step}, init, bounds_union{});
 }
 
 constexpr int ROOT = -1;
-constexpr affine2 IDENTITY{1.0, 0.0, 0.0, 0.0};
+constexpr frame3 IDENTITY{{1.0, 0.0, 0.0, 0.0}, 0.0, 0.0, 0.0};
 
 struct is_open {
   __host__ __device__ bool operator()(unsigned char c) const {
@@ -251,8 +285,8 @@ __global__ void branch_kernel(int n, const unsigned char *cmd, const int *depth,
 }
 
 __global__ void doubling_kernel(int n, const unsigned char *cmd,
-                                const affine2 *accIn, const int *jumpIn,
-                                affine2 *accOut, int *jumpOut) {
+                                const frame3 *accIn, const int *jumpIn,
+                                frame3 *accOut, int *jumpOut) {
   compose comp;
   GRID_STRIDE_LOOP(i, n) {
     int p = cmd[i] == '[' ? jumpIn[i] : ROOT;
@@ -261,8 +295,8 @@ __global__ void doubling_kernel(int n, const unsigned char *cmd,
   }
 }
 
-__global__ void world_b_kernel(int n, const int *branch, const affine2 *acc,
-                               const affine2 *P, affine2 init, affine2 *world) {
+__global__ void world_b_kernel(int n, const int *branch, const frame3 *acc,
+                               const frame3 *P, frame3 init, frame3 *world) {
   compose comp;
   GRID_STRIDE_LOOP(i, n) {
     int b = branch[i];
@@ -308,15 +342,15 @@ void resolve_prefix(const device_buffer<unsigned char> &commands,
                     const turtle_config &cfg) {
   const int n = commands.size;
   const double da = radians(cfg.angle_deg);
-  auto locals = thrust::make_transform_iterator(
-      dptr(commands.data), to_local{cfg.step, std::cos(da), std::sin(da)});
+  auto locals = thrust::make_transform_iterator(dptr(commands.data),
+                                                to_local{cfg.step, da});
 
   int *skey = grow(g.skey, n), *order = grow(g.order, n);
   thrust::copy(par, dptr(g.branch.data), dptr(g.branch.data) + n, dptr(skey));
   thrust::sequence(par, dptr(order), dptr(order) + n);
   thrust::stable_sort_by_key(par, dptr(skey), dptr(skey) + n, dptr(order));
 
-  affine2 *sorted = grow(g.sorted, n);
+  frame3 *sorted = grow(g.sorted, n);
   thrust::gather(par, dptr(order), dptr(order) + n, locals, dptr(sorted));
   thrust::exclusive_scan_by_key(par, dptr(skey), dptr(skey) + n, dptr(sorted),
                                 dptr(sorted), IDENTITY, thrust::equal_to<int>(),
@@ -327,10 +361,10 @@ void resolve_prefix(const device_buffer<unsigned char> &commands,
 
 // Carry each '[' entry transform up the bracket tree by pointer doubling
 // (parent = branch[b]), seeding each '[' with its own prefix
-affine2 *resolve_entries(const device_buffer<unsigned char> &commands,
-                         int maxdepth) {
+frame3 *resolve_entries(const device_buffer<unsigned char> &commands,
+                        int maxdepth) {
   const int n = commands.size;
-  affine2 *accA = grow(g.accA, n), *accB = grow(g.accB, n);
+  frame3 *accA = grow(g.accA, n), *accB = grow(g.accB, n);
   int *jumpA = grow(g.jumpA, n), *jumpB = grow(g.jumpB, n);
   thrust::copy(par, dptr(g.prefix.data), dptr(g.prefix.data) + n, dptr(accA));
   thrust::copy(par, dptr(g.branch.data), dptr(g.branch.data) + n, dptr(jumpA));
@@ -345,16 +379,16 @@ affine2 *resolve_entries(const device_buffer<unsigned char> &commands,
 
 // Same as `scan_world`
 void scan_world_bracketed(const device_buffer<unsigned char> &commands,
-                          const turtle_config &cfg, affine2 *world) {
+                          const turtle_config &cfg, frame3 *world) {
   const int n = commands.size;
   if (n <= 0)
     return;
   const int maxdepth = resolve_branches(commands);
   resolve_prefix(commands, cfg);
-  const affine2 *entry = resolve_entries(commands, maxdepth);
+  const frame3 *entry = resolve_entries(commands, maxdepth);
 
   const double h = radians(cfg.start_heading_deg);
-  const affine2 init{std::cos(h), std::sin(h), 0.0, 0.0};
+  const frame3 init{quat_axis_angle(UP(), h), 0.0, 0.0, 0.0};
   launch("world_b", world_b_kernel, n, n, g.branch.data, entry, g.prefix.data,
          init, world);
   check(cudaDeviceSynchronize(), "scan_world_bracketed");
@@ -365,7 +399,7 @@ template <class T, class Xform>
 int scan_and_emit(const device_buffer<unsigned char> &commands,
                   const turtle_config &cfg, T *out, Xform xform) {
   const int n = commands.size;
-  affine2 *world = grow(g.world, n);
+  frame3 *world = grow(g.world, n);
   auto cmd = dptr(commands.data);
   if (thrust::count(par, cmd, cmd + n, static_cast<unsigned char>('[')) > 0)
     scan_world_bracketed(commands, cfg, world);

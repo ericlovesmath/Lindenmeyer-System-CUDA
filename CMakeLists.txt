@@ -33,7 +33,7 @@ if(NOT EXISTS ${IMGUI_DIR}/imgui.cpp)
   message(FATAL_ERROR "extern/imgui is empty; run: git submodule update --init")
 endif()
 file(GLOB IMGUI_SRC CONFIGURE_DEPENDS ${IMGUI_DIR}/*.cpp)
-add_executable(playground src/app/playground.cpp ${IMGUI_SRC}
+add_executable(playground src/app/playground.cpp src/app/renderer.cpp ${IMGUI_SRC}
   ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
   ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp)
 target_include_directories(playground PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)

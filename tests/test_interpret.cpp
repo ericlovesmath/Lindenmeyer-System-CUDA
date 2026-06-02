@@ -3,6 +3,8 @@
 #include "cpu/interpret.h"
 #include "gpu/interpret.h"
 
+#include "core/quat.h"
+
 #include "check.h"
 
 #include <algorithm>
@@ -18,7 +20,7 @@ double extent(const std::vector<segment> &segs) {
   double m = 1.0;
   for (const segment &s : segs)
     for (const pos &p : {s.a, s.b})
-      m = std::max({m, std::fabs(p.x), std::fabs(p.y)});
+      m = std::max({m, std::fabs(p.x), std::fabs(p.y), std::fabs(p.z)});
   return m;
 }
 
@@ -30,13 +32,17 @@ void expect_segments_near(const std::vector<segment> &got,
   for (std::size_t i = 0; i < want.size(); ++i) {
     EXPECT_NEAR(got[i].a.x, want[i].a.x, tol);
     EXPECT_NEAR(got[i].a.y, want[i].a.y, tol);
+    EXPECT_NEAR(got[i].a.z, want[i].a.z, tol);
     EXPECT_NEAR(got[i].b.x, want[i].b.x, tol);
     EXPECT_NEAR(got[i].b.y, want[i].b.y, tol);
+    EXPECT_NEAR(got[i].b.z, want[i].b.z, tol);
   }
 }
 
 // Direction vector of a segment (b - a)
-pos dir(const segment &s) { return {s.b.x - s.a.x, s.b.y - s.a.y}; }
+pos dir(const segment &s) {
+  return {s.b.x - s.a.x, s.b.y - s.a.y, s.b.z - s.a.z};
+}
 
 void test_interpret_cpu() {
   turtle_config cfg{1.0, 90.0, 0.0};
@@ -94,7 +100,8 @@ void test_bracket_restores_heading() {
 
 // The GPU turtle must match the CPU turtle
 void test_gpu_matches_cpu() {
-  const example *cases[] = {&koch, &plant, &dragon, &hilbert, &sierpinski};
+  const example *cases[] = {&koch,    &plant,      &dragon,
+                            &hilbert, &sierpinski, &bush};
   for (const example *e : cases) {
     for (int n = 0; n <= 6; ++n) {
       std::string commands = expand(e->sys, n);
@@ -116,10 +123,15 @@ void test_frames_match_segments() {
       float tol = static_cast<float>(1e-4 * extent(segs));
       double step = e->cfg.step;
       for (std::size_t i = 0; i < segs.size(); ++i) {
-        EXPECT_NEAR(frames[i].tx, segs[i].a.x, tol);
-        EXPECT_NEAR(frames[i].ty, segs[i].a.y, tol);
-        EXPECT_NEAR(frames[i].tx + step * frames[i].c, segs[i].b.x, tol);
-        EXPECT_NEAR(frames[i].ty + step * frames[i].s, segs[i].b.y, tol);
+        const gpu_frame &f = frames[i];
+        quat q{f.qw, f.qx, f.qy, f.qz};
+        vec3 h = qrotate(q, {1.0, 0.0, 0.0}); // heading axis
+        EXPECT_NEAR(f.px, segs[i].a.x, tol);
+        EXPECT_NEAR(f.py, segs[i].a.y, tol);
+        EXPECT_NEAR(f.pz, segs[i].a.z, tol);
+        EXPECT_NEAR(f.px + step * h.x, segs[i].b.x, tol);
+        EXPECT_NEAR(f.py + step * h.y, segs[i].b.y, tol);
+        EXPECT_NEAR(f.pz + step * h.z, segs[i].b.z, tol);
       }
     }
   }
@@ -150,6 +162,9 @@ void test_bracket_edge_cases() {
       "F[+F][-F]F",     // sibling branches restore independently
       "F[+F[+F[+F]]]F", // deep nesting
       "[[[F]]]",        // immediate nesting then draw
+      "F[&F]F[^F]F",    // pitch out of the plane and back
+      "F[/&F][\\&F]F",  // rolled, pitched sibling branches (genuinely 3D)
+      "&F^F/F\\F|F",    // every rotation command, no brackets
   };
   for (const char *s : cases) {
     expect_segments_near(interpret_gpu(s, cfg), interpret(s, cfg));
@@ -158,7 +173,8 @@ void test_bracket_edge_cases() {
 
 // Every built-in example runs end to end
 void test_examples_sanity() {
-  const example *cases[] = {&koch, &plant, &dragon, &hilbert, &sierpinski};
+  const example *cases[] = {&koch,    &plant,      &dragon,
+                            &hilbert, &sierpinski, &bush};
   for (const example *e : cases) {
     std::string commands = expand(e->sys, e->iterations);
     EXPECT_TRUE(!interpret(commands, e->cfg).empty());

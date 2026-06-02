@@ -1,6 +1,6 @@
 #include "cpu/examples.h"
-#include "cpu/image.h"
 #include "cpu/expand.h"
+#include "cpu/image.h"
 #include "cpu/interpret.h"
 
 #include <iostream>
@@ -31,6 +31,7 @@ int main(int argc, char **argv) {
   render(dragon, out_dir + "/dragon.ppm");
   render(hilbert, out_dir + "/hilbert.ppm");
   render(sierpinski, out_dir + "/sierpinski.ppm");
+  render(bush, out_dir + "/bush.ppm");
 
   return 0;
 }
