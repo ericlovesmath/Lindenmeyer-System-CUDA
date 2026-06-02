@@ -28,7 +28,7 @@ add_library(lsystem_gpu STATIC
   src/gpu/transform_gpu.cu
   src/gpu/gl_interop.cu
 )
-target_link_libraries(lsystem_gpu PRIVATE lsystem_cpu OpenGL::GL)
+target_link_libraries(lsystem_gpu PRIVATE OpenGL::GL)
 
 add_executable(render src/app/render_demo.cpp)
 target_link_libraries(render PRIVATE lsystem_cpu)
