@@ -93,19 +93,12 @@ struct bench_case {
   int iterations;
 };
 
-// Time the CPU and (unless its GPU stage falls back) GPU work for one case and
-// print the row. `has_gpu` is false for bracketed systems whose GPU turtle
-// stage isn't implemented — those print a CPU-only fallback row.
+// Time the CPU and GPU work for one case and print the row.
 template <class Cpu, class MakeDev>
-void bench_row(const bench_case &c, bool has_gpu, Cpu cpu_run, MakeDev make_dev,
-               int reps) {
+void bench_row(const bench_case &c, Cpu cpu_run, MakeDev make_dev, int reps) {
   cpu_result cpu = time_cpu(cpu_run, reps);
   std::printf(LEAD_FMT, c.ex.name.c_str(), c.iterations,
               human(cpu.count).c_str(), cpu.ms);
-  if (!has_gpu) {
-    std::printf("      (cpu fallback)\n");
-    return;
-  }
   gpu_result gpu = time_gpu(make_dev, reps);
   double speedup = gpu.dev > 0.0 ? cpu.ms / gpu.dev : 0.0;
   std::printf("%9.1f%9.1f%8.1fx\n", gpu.dev, gpu.e2e, speedup);
@@ -115,19 +108,9 @@ const std::vector<bench_case> expand_cases = {
     {koch, 12}, {plant, 12}, {dragon, 24}, {hilbert, 12}, {sierpinski, 16},
 };
 
-// `plant` is bracketed: its turtle stage falls back to the CPU interpreter.
 const std::vector<bench_case> transform_cases = {
-    {koch, 10}, {plant, 9}, {dragon, 22}, {hilbert, 11}, {sierpinski, 13},
+    {koch, 10}, {plant, 11}, {dragon, 22}, {hilbert, 11}, {sierpinski, 13},
 };
-
-bool is_bracketed(const example &ex) {
-  for (const auto &rule : ex.sys.rules) {
-    if (rule.second.find_first_of("[]") != std::string::npos) {
-      return true;
-    }
-  }
-  return ex.sys.axiom.find_first_of("[]") != std::string::npos;
-}
 
 } // namespace
 
@@ -144,7 +127,7 @@ int main(int argc, char **argv) {
   print_header("symbols");
   for (const bench_case &c : expand_cases) {
     bench_row(
-        c, true, [&] { return expand(c.ex.sys, c.iterations); },
+        c, [&] { return expand(c.ex.sys, c.iterations); },
         [&] { return expand_device(c.ex.sys, c.iterations); }, reps);
   }
 
@@ -154,7 +137,7 @@ int main(int argc, char **argv) {
   for (const bench_case &c : transform_cases) {
     std::string commands = expand(c.ex.sys, c.iterations); // untimed
     bench_row(
-        c, !is_bracketed(c.ex), [&] { return interpret(commands, c.ex.cfg); },
+        c, [&] { return interpret(commands, c.ex.cfg); },
         [&] { return interpret_device(to_device(commands), c.ex.cfg); }, reps);
   }
 
@@ -163,7 +146,7 @@ int main(int argc, char **argv) {
   print_header("segments");
   for (const bench_case &c : transform_cases) {
     bench_row(
-        c, !is_bracketed(c.ex),
+        c,
         [&] {
           std::string s = expand(c.ex.sys, c.iterations);
           return interpret(s, c.ex.cfg);

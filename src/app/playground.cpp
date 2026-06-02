@@ -5,7 +5,6 @@
 
 #include "cpu/examples.h"
 #include "cpu/image.h"
-#include "cpu/turtle.h"
 #include "gpu/gl_interop.h"
 #include "gpu/lsystem_gpu.h"
 #include "gpu/transform_gpu.h"
@@ -31,15 +30,6 @@ const example *examples[] = {&koch, &plant, &dragon, &hilbert, &sierpinski};
 
 // Iteration cap for the slider
 constexpr int MAX_ITERS = 10;
-
-bool is_bracketed(const l_system &sys) {
-  if (sys.axiom.find('[') != std::string::npos)
-    return true;
-  for (const auto &rule : sys.rules)
-    if (rule.second.find('[') != std::string::npos)
-      return true;
-  return false;
-}
 
 void glfw_error_callback(int error, const char *desc) {
   std::fprintf(stderr, "GLFW error %d: %s\n", error, desc);
@@ -108,35 +98,6 @@ void main() {
   glAttachShader(prog, compile_shader(GL_FRAGMENT_SHADER, fs));
   glLinkProgram(prog);
   return prog;
-}
-
-// Convert CPU turtle segments (the bracketed path) to instance frames
-std::vector<gpu_frame> segments_to_frames(const std::vector<segment> &segs) {
-  std::vector<gpu_frame> frames;
-  frames.reserve(segs.size());
-  for (const segment &s : segs) {
-    float dx = float(s.b.x - s.a.x), dy = float(s.b.y - s.a.y);
-    float len = std::sqrt(dx * dx + dy * dy);
-    float inv = len > 0.0f ? 1.0f / len : 0.0f;
-    frames.push_back({float(s.a.x), float(s.a.y), dx * inv, dy * inv});
-  }
-  return frames;
-}
-
-// Bounding box of the segments `frames` would draw for the camera fit
-bounds2 host_bounds(const std::vector<gpu_frame> &frames, double step) {
-  if (frames.empty())
-    return {0, 0, 0, 0};
-  float st = static_cast<float>(step);
-  bounds2 b{frames[0].tx, frames[0].ty, frames[0].tx, frames[0].ty};
-  for (const gpu_frame &f : frames) {
-    float x1 = f.tx + st * f.c, y1 = f.ty + st * f.s;
-    b.min_x = std::min({b.min_x, f.tx, x1});
-    b.min_y = std::min({b.min_y, f.ty, y1});
-    b.max_x = std::max({b.max_x, f.tx, x1});
-    b.max_y = std::max({b.max_y, f.ty, y1});
-  }
-  return b;
 }
 
 // Per-frame draw inputs, the camera and line style
@@ -212,7 +173,7 @@ struct instanced_renderer {
     count = n;
   }
 
-  // Non-bracketed path
+  // Resolve the turtle on the GPU (brackets included) into the instance buffer
   void fill_from_device(const device_buffer<unsigned char> &commands,
                         const turtle_config &cfg) {
     step = static_cast<float>(cfg.step);
@@ -229,13 +190,6 @@ struct instanced_renderer {
     frames_view fv = interpret_frames_fallback(commands, cfg);
     upload_instances(fv.data, static_cast<GLsizei>(fv.count));
     bbox = fv.bbox;
-  }
-
-  // Bracketed path: frames resolved on the CPU, uploaded into the same buffer.
-  void fill_from_host(const std::vector<gpu_frame> &frames, double seg_len) {
-    step = static_cast<float>(seg_len);
-    bbox = host_bounds(frames, seg_len);
-    upload_instances(frames.data(), static_cast<GLsizei>(frames.size()));
   }
 
   void draw(const draw_params &p) const {
@@ -307,7 +261,6 @@ controls defaults_for(const example &e) {
 struct render_stats {
   std::size_t symbols = 0, segments = 0;
   double expand_ms = 0.0, turtle_ms = 0.0;
-  bool turtle_on_gpu = true;
 };
 
 render_stats recompute(const example &ex, const controls &ctl,
@@ -315,21 +268,14 @@ render_stats recompute(const example &ex, const controls &ctl,
   using clock = std::chrono::steady_clock;
   using ms = std::chrono::duration<double, std::milli>;
   render_stats st;
-  st.turtle_on_gpu = !is_bracketed(ex.sys);
 
   auto t0 = clock::now();
   device_buffer<unsigned char> commands = expand_device(ex.sys, ctl.iterations);
   auto t1 = clock::now();
 
   turtle_config cfg{ex.cfg.step, ctl.angle_deg, ctl.heading_deg};
-  if (st.turtle_on_gpu) {
-    lines.fill_from_device(commands, cfg);
-    st.symbols = commands.size;
-  } else {
-    std::string s = to_host(commands);
-    lines.fill_from_host(segments_to_frames(interpret(s, cfg)), cfg.step);
-    st.symbols = s.size();
-  }
+  lines.fill_from_device(commands, cfg);
+  st.symbols = commands.size;
   auto t2 = clock::now();
 
   st.expand_ms = ms(t1 - t0).count();
@@ -444,9 +390,8 @@ int main() {
     ImGui::Separator();
     ImGui::Text("%zu symbols, %zu segments", stats.symbols, stats.segments);
     ImGui::Text("GPU expand: %.3f ms", stats.expand_ms);
-    const char *turtle_where = !stats.turtle_on_gpu ? "CPU brackets"
-                               : lines.interop      ? "GPU interop"
-                                                    : "GPU + host copy";
+    const char *turtle_where =
+        lines.interop ? "GPU interop" : "GPU + host copy";
     ImGui::Text("turtle:     %.3f ms (%s)", stats.turtle_ms, turtle_where);
     ImGui::Text("GPU raster: %.3f ms (avg)", raster_ms);
     ImGui::Text("total:      %.3f ms",

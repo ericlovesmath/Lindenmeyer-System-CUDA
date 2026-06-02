@@ -14,12 +14,12 @@ inline void check(cudaError_t err, const char *what) {
   }
 }
 
-// Allocate `count` elements of T on the device (at least one). Free with
-// device_free() or cudaFree().
+// Pooled device allocation: blocks freed by device_free() are kept and reused
+void *pool_alloc(std::size_t bytes);
+
+// Allocate `count` elements of T on the device, free with device_free()
 template <typename T> T *device_alloc(std::size_t count) {
-  T *p = nullptr;
-  check(cudaMalloc(&p, sizeof(T) * (count > 0 ? count : 1)), "cudaMalloc");
-  return p;
+  return static_cast<T *>(pool_alloc(sizeof(T) * (count > 0 ? count : 1)));
 }
 
 // Copy `count` elements host to device and vice versa

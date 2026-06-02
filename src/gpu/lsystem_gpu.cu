@@ -8,6 +8,7 @@
 
 #include <array>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -105,15 +106,44 @@ unsigned char *expand_step(const unsigned char *in, int n,
   launch("scatter_kernel", scatter_kernel, n, in, n, rules.off, rules.len,
          rules.data, off, out);
 
-  cudaFree(len);
-  cudaFree(off);
+  device_free(len);
+  device_free(off);
   *out_n = total;
   return out;
 }
 
 } // namespace
 
-void device_free(void *p) noexcept { cudaFree(p); }
+namespace {
+// Freed device blocks kept for reuse, bucketed by exact byte size
+std::unordered_map<std::size_t, std::vector<void *>> pool;
+std::unordered_map<void *, std::size_t> block_size;
+} // namespace
+
+void *pool_alloc(std::size_t bytes) {
+  auto &bin = pool[bytes];
+  if (!bin.empty()) {
+    void *p = bin.back();
+    bin.pop_back();
+    return p;
+  }
+  void *p = nullptr;
+  check(cudaMalloc(&p, bytes), "cudaMalloc");
+  block_size[p] = bytes;
+  return p;
+}
+
+void device_free(void *p) noexcept {
+  if (!p) {
+    return;
+  }
+  auto it = block_size.find(p);
+  if (it != block_size.end()) {
+    pool[it->second].push_back(p);
+  } else {
+    cudaFree(p);
+  }
+}
 
 device_buffer<unsigned char> to_device(const std::string &s) {
   const int n = static_cast<int>(s.size());
@@ -146,14 +176,14 @@ device_buffer<unsigned char> expand_device(const l_system &sys,
   for (int it = 0; it < iterations && n > 0; ++it) {
     int next_n = 0;
     unsigned char *next = expand_step(cur, n, rules, &next_n);
-    cudaFree(cur);
+    device_free(cur);
     cur = next;
     n = next_n;
   }
 
-  cudaFree(rules.off);
-  cudaFree(rules.len);
-  cudaFree(rules.data);
+  device_free(rules.off);
+  device_free(rules.len);
+  device_free(rules.data);
   check(cudaDeviceSynchronize(), "sync"); // result is ready when we return
   return {cur, n};
 }

@@ -94,7 +94,7 @@ void test_bracket_restores_heading() {
 
 // The GPU turtle must match the CPU turtle
 void test_gpu_matches_cpu() {
-  const example *cases[] = {&koch, &dragon, &hilbert, &sierpinski};
+  const example *cases[] = {&koch, &plant, &dragon, &hilbert, &sierpinski};
   for (const example *e : cases) {
     for (int n = 0; n <= 6; ++n) {
       std::string commands = expand(e->sys, n);
@@ -141,12 +141,18 @@ void test_degenerate() {
   EXPECT_EQ(interpret_gpu("++--XY", turtle_config{}).size(), std::size_t(0));
 }
 
-// Bracketed systems fall back to the CPU interpreter
-void test_bracketed_fallback() {
-  for (int n = 0; n <= 5; ++n) {
-    std::string commands = expand(plant.sys, n);
-    expect_segments_near(interpret_gpu(commands, plant.cfg),
-                         interpret(commands, plant.cfg));
+void test_bracket_edge_cases() {
+  turtle_config cfg{1.0, 25.0, 70.0};
+  const char *cases[] = {
+      "F[+F",           // unclosed '[' runs to end of string
+      "F[+F[-F",        // unclosed nested branches
+      "F[f+F]F",        // 'f' moves without drawing inside a branch
+      "F[+F][-F]F",     // sibling branches restore independently
+      "F[+F[+F[+F]]]F", // deep nesting
+      "[[[F]]]",        // immediate nesting then draw
+  };
+  for (const char *s : cases) {
+    expect_segments_near(interpret_gpu(s, cfg), interpret(s, cfg));
   }
 }
 
@@ -169,7 +175,7 @@ int main() {
   test_frames_match_segments();
   test_single_forward();
   test_degenerate();
-  test_bracketed_fallback();
+  test_bracket_edge_cases();
   test_examples_sanity();
   std::printf("All tests passed.\n");
   return 0;

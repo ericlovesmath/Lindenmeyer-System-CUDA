@@ -1,15 +1,25 @@
 #include "gpu/transform_gpu.h"
 
-#include "cpu/turtle.h"      // CPU interpret() fallback for bracketed systems
 #include "gpu/cuda_check.h"  // check(), device_alloc(), download()
 #include "gpu/lsystem_gpu.h" // to_device() for the host-string convenience
 
+#include <thrust/binary_search.h>
 #include <thrust/copy.h>
+#include <thrust/count.h>
 #include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
+#include <thrust/functional.h>
+#include <thrust/gather.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
+#include <thrust/reduce.h>
 #include <thrust/scan.h>
+#include <thrust/scatter.h>
+#include <thrust/sequence.h>
+#include <thrust/sort.h>
 #include <thrust/transform_reduce.h>
+
+#include <algorithm>
 
 #include <cfloat>
 #include <cmath>
@@ -21,6 +31,29 @@ namespace {
 constexpr double PI = 3.14159265358979323846;
 
 constexpr double radians(double degrees) { return degrees * PI / 180.0; }
+
+constexpr int BLOCK = 256;
+int grid_for(int n) { return (n + BLOCK - 1) / BLOCK; }
+
+// Launch a grid-strided kernel over `n` items and check
+template <typename Kernel, typename... Args>
+void launch(const char *name, Kernel kernel, int n, Args... args) {
+  if (n <= 0)
+    return;
+  kernel<<<grid_for(n), BLOCK>>>(args...);
+  check(cudaGetLastError(), name);
+}
+
+// Every kernel below walks its range with this grid-stride loop.
+#define GRID_STRIDE_LOOP(i, n)                                                 \
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < (n);                 \
+       i += blockDim.x * gridDim.x)
+
+// Shorthands used throughout: a device_ptr cast and the async execution policy.
+template <class T> thrust::device_ptr<T> dptr(T *p) {
+  return thrust::device_pointer_cast(p);
+}
+const auto par = thrust::cuda::par_nosync;
 
 // A 2D rigid transform acting on a point
 struct affine2 {
@@ -83,10 +116,8 @@ void scan_world(const device_buffer<unsigned char> &commands,
                h = radians(cfg.start_heading_deg);
   const to_local local{cfg.step, std::cos(delta), std::sin(delta)};
   const affine2 init{std::cos(h), std::sin(h), 0.0, 0.0};
-  auto in = thrust::device_pointer_cast(commands.data);
-  auto locals = thrust::make_transform_iterator(in, local);
-  thrust::exclusive_scan(thrust::cuda::par_nosync, locals, locals + n,
-                         thrust::device_pointer_cast(world), init, compose{});
+  auto locals = thrust::make_transform_iterator(dptr(commands.data), local);
+  thrust::exclusive_scan(par, locals, locals + n, dptr(world), init, compose{});
 }
 
 gpu_frame *pinned_alloc(int count) {
@@ -115,6 +146,20 @@ struct scratch {
   device_buffer<gpu_frame> frames; // compacted F frames (fallback)
   gpu_frame *host = nullptr;       // pinned D2H staging (fallback)
   int host_cap = 0;
+
+  // Bracketed-turtle temporaries (see scan_world_bracketed)
+  device_buffer<int> depth;          // bracket nesting depth
+  device_buffer<long long> qkey;     // per-symbol (level, position) lookup key
+  device_buffer<int> qidx;           // lower_bound of qkey in the open keys
+  device_buffer<int> openpos;        // '[' positions, sorted by openkey
+  device_buffer<long long> openkey;  // (level, position) key per '['
+  device_buffer<int> branch;         // innermost enclosing '[' (ROOT = -1)
+  device_buffer<int> skey, order;    // branch ids + permutation that sorts them
+  device_buffer<affine2> sorted;     // locals in branch order, scanned in place
+  device_buffer<affine2> prefix;     // within-branch prefix P, original order
+  device_buffer<affine2> accA, accB; // pointer-doubling entry accumulator
+  device_buffer<int> jumpA, jumpB;   // pointer-doubling parent jump
+
   ~scratch() { pinned_free(host); }
 
   gpu_frame *host_ptr(int n) {
@@ -155,20 +200,181 @@ bounds2 frames_bounds(const gpu_frame *frames, int count, float step) {
                                   frame_extent{step}, init, bounds_union{});
 }
 
-// Scan, then compact every drawn (`F`) frame through `xform` into `out`, and
-// return the number written
+constexpr int ROOT = -1;
+constexpr affine2 IDENTITY{1.0, 0.0, 0.0, 0.0};
+
+struct is_open {
+  __host__ __device__ bool operator()(unsigned char c) const {
+    return c == '[';
+  }
+};
+struct to_delta { // signed bracket-depth contribution of a symbol
+  __host__ __device__ int operator()(unsigned char c) const {
+    return c == '[' ? 1 : (c == ']' ? -1 : 0);
+  }
+};
+
+// A '[' belongs to its parent branch, so it looks up one level shallower.
+__host__ __device__ int level_at(unsigned char c, int depth) {
+  return c == '[' ? depth - 1 : depth;
+}
+// (level, position) packed so a sort/search orders by level then position.
+__host__ __device__ long long key_of(int level, int pos, long long n1) {
+  return static_cast<long long>(level) * n1 + pos;
+}
+
+// Pack each symbol's lookup key (a '[' belongs to its parent, one level up).
+__global__ void key_kernel(int n, const unsigned char *cmd, const int *depth,
+                           long long n1, long long *qkey) {
+  GRID_STRIDE_LOOP(i, n)
+  qkey[i] = key_of(level_at(cmd[i], depth[i]), i, n1);
+}
+
+// Pack the key of each '[' so the open list can be sorted and searched.
+__global__ void openkey_kernel(int nopen, const int *openpos, const int *depth,
+                               long long n1, long long *openkey) {
+  GRID_STRIDE_LOOP(k, nopen)
+  openkey[k] = key_of(depth[openpos[k]], openpos[k], n1);
+}
+
+// branch[i] = innermost enclosing '['
+__global__ void branch_kernel(int n, const unsigned char *cmd, const int *depth,
+                              const int *qidx, const long long *openkey,
+                              const int *openpos, long long n1, int *branch) {
+  GRID_STRIDE_LOOP(i, n) {
+    int j = qidx[i];
+    branch[i] = (j > 0 && openkey[j - 1] / n1 == level_at(cmd[i], depth[i]))
+                    ? openpos[j - 1]
+                    : ROOT;
+  }
+}
+
+__global__ void doubling_kernel(int n, const unsigned char *cmd,
+                                const affine2 *accIn, const int *jumpIn,
+                                affine2 *accOut, int *jumpOut) {
+  compose comp;
+  GRID_STRIDE_LOOP(i, n) {
+    int p = cmd[i] == '[' ? jumpIn[i] : ROOT;
+    accOut[i] = p < 0 ? accIn[i] : comp(accIn[p], accIn[i]);
+    jumpOut[i] = p < 0 ? ROOT : jumpIn[p];
+  }
+}
+
+__global__ void world_b_kernel(int n, const int *branch, const affine2 *acc,
+                               const affine2 *P, affine2 init, affine2 *world) {
+  compose comp;
+  GRID_STRIDE_LOOP(i, n) {
+    int b = branch[i];
+    world[i] = comp(b < 0 ? init : comp(init, acc[b]), P[i]);
+  }
+}
+
+// Step 1. Fill g.branch[i] = innermost enclosing '['
+// Returns the max nesting depth (height of the bracket tree)
+int resolve_branches(const device_buffer<unsigned char> &commands) {
+  const int n = commands.size;
+  const long long n1 = static_cast<long long>(n) + 1;
+  auto cmd = dptr(commands.data);
+
+  int *depth = grow(g.depth, n);
+  auto deltas = thrust::make_transform_iterator(cmd, to_delta{});
+  thrust::inclusive_scan(par, deltas, deltas + n, dptr(depth));
+  int maxdepth = thrust::reduce(par, dptr(depth), dptr(depth) + n, 0,
+                                thrust::maximum<int>());
+
+  launch("key", key_kernel, n, n, commands.data, depth, n1, grow(g.qkey, n));
+
+  int *openpos = grow(g.openpos, n);
+  int nopen =
+      static_cast<int>(thrust::copy_if(par, thrust::make_counting_iterator(0),
+                                       thrust::make_counting_iterator(n), cmd,
+                                       dptr(openpos), is_open{}) -
+                       dptr(openpos));
+  long long *openkey = grow(g.openkey, n);
+  launch("openkey", openkey_kernel, nopen, nopen, openpos, depth, n1, openkey);
+  thrust::sort_by_key(par, dptr(openkey), dptr(openkey) + nopen, dptr(openpos));
+
+  thrust::lower_bound(par, dptr(openkey), dptr(openkey) + nopen,
+                      dptr(g.qkey.data), dptr(g.qkey.data) + n,
+                      dptr(grow(g.qidx, n)));
+  launch("branch", branch_kernel, n, n, commands.data, depth, g.qidx.data,
+         openkey, openpos, n1, grow(g.branch, n));
+  return maxdepth;
+}
+
+// Fill g.prefix[i] = within-branch exclusive compose-scan
+void resolve_prefix(const device_buffer<unsigned char> &commands,
+                    const turtle_config &cfg) {
+  const int n = commands.size;
+  const double da = radians(cfg.angle_deg);
+  auto locals = thrust::make_transform_iterator(
+      dptr(commands.data), to_local{cfg.step, std::cos(da), std::sin(da)});
+
+  int *skey = grow(g.skey, n), *order = grow(g.order, n);
+  thrust::copy(par, dptr(g.branch.data), dptr(g.branch.data) + n, dptr(skey));
+  thrust::sequence(par, dptr(order), dptr(order) + n);
+  thrust::stable_sort_by_key(par, dptr(skey), dptr(skey) + n, dptr(order));
+
+  affine2 *sorted = grow(g.sorted, n);
+  thrust::gather(par, dptr(order), dptr(order) + n, locals, dptr(sorted));
+  thrust::exclusive_scan_by_key(par, dptr(skey), dptr(skey) + n, dptr(sorted),
+                                dptr(sorted), IDENTITY, thrust::equal_to<int>(),
+                                compose{});
+  thrust::scatter(par, dptr(sorted), dptr(sorted) + n, dptr(order),
+                  dptr(grow(g.prefix, n)));
+}
+
+// Carry each '[' entry transform up the bracket tree by pointer doubling
+// (parent = branch[b]), seeding each '[' with its own prefix
+affine2 *resolve_entries(const device_buffer<unsigned char> &commands,
+                         int maxdepth) {
+  const int n = commands.size;
+  affine2 *accA = grow(g.accA, n), *accB = grow(g.accB, n);
+  int *jumpA = grow(g.jumpA, n), *jumpB = grow(g.jumpB, n);
+  thrust::copy(par, dptr(g.prefix.data), dptr(g.prefix.data) + n, dptr(accA));
+  thrust::copy(par, dptr(g.branch.data), dptr(g.branch.data) + n, dptr(jumpA));
+  for (int step = 1; step < maxdepth; step <<= 1) { // chain length <= maxdepth
+    launch("double", doubling_kernel, n, n, commands.data, accA, jumpA, accB,
+           jumpB);
+    std::swap(accA, accB);
+    std::swap(jumpA, jumpB);
+  }
+  return accA;
+}
+
+// Same as `scan_world`
+void scan_world_bracketed(const device_buffer<unsigned char> &commands,
+                          const turtle_config &cfg, affine2 *world) {
+  const int n = commands.size;
+  if (n <= 0)
+    return;
+  const int maxdepth = resolve_branches(commands);
+  resolve_prefix(commands, cfg);
+  const affine2 *entry = resolve_entries(commands, maxdepth);
+
+  const double h = radians(cfg.start_heading_deg);
+  const affine2 init{std::cos(h), std::sin(h), 0.0, 0.0};
+  launch("world_b", world_b_kernel, n, n, g.branch.data, entry, g.prefix.data,
+         init, world);
+  check(cudaDeviceSynchronize(), "scan_world_bracketed");
+}
+
+// Scan, then compact every drawn (`F`) frame through `xform` into `out`
 template <class T, class Xform>
 int scan_and_emit(const device_buffer<unsigned char> &commands,
                   const turtle_config &cfg, T *out, Xform xform) {
   const int n = commands.size;
-  scan_world(commands, cfg, grow(g.world, n));
-  auto in = thrust::device_pointer_cast(commands.data);
-  auto src = thrust::make_transform_iterator(
-      thrust::device_pointer_cast(g.world.data), xform);
-  auto dst = thrust::device_pointer_cast(out);
-  auto end = thrust::copy_if(src, src + n, in, dst, is_forward{});
+  affine2 *world = grow(g.world, n);
+  auto cmd = dptr(commands.data);
+  if (thrust::count(par, cmd, cmd + n, static_cast<unsigned char>('[')) > 0)
+    scan_world_bracketed(commands, cfg, world);
+  else
+    scan_world(commands, cfg, world);
+  auto frames = thrust::make_transform_iterator(dptr(world), xform);
+  auto end =
+      thrust::copy_if(par, frames, frames + n, cmd, dptr(out), is_forward{});
   check(cudaDeviceSynchronize(), "sync");
-  return static_cast<int>(end - dst);
+  return static_cast<int>(end - dptr(out));
 }
 
 } // namespace
@@ -212,10 +418,5 @@ std::vector<segment> to_host(const device_buffer<segment> &buf) {
 
 std::vector<segment> interpret_gpu(const std::string &commands,
                                    const turtle_config &cfg) {
-  // Bracketed systems need a turtle stack the linear scan cannot model.
-  // TODO: Work on bracketed as well.
-  if (commands.find_first_of("[]") != std::string::npos) {
-    return interpret(commands, cfg); // CPU fallback
-  }
   return to_host(interpret_device(to_device(commands), cfg));
 }
