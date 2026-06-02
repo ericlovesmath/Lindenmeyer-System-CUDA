@@ -171,7 +171,8 @@ struct scratch {
     return host;
   }
 };
-scratch g;
+
+scratch &g = *new scratch();
 
 // Bounding box of the segment a frame draws (both endpoints).
 struct frame_extent {
