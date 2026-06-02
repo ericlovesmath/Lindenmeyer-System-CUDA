@@ -21,12 +21,14 @@ add_library(lsystem_cpu STATIC
   src/cpu/examples.cpp
 )
 
-# GPU L-system expansion and transform engine.
+# GPU L-system expansion and transform engine
+find_package(OpenGL REQUIRED)
 add_library(lsystem_gpu STATIC
   src/gpu/lsystem_gpu.cu
   src/gpu/transform_gpu.cu
+  src/gpu/gl_interop.cu
 )
-target_link_libraries(lsystem_gpu PRIVATE lsystem_cpu)
+target_link_libraries(lsystem_gpu PRIVATE lsystem_cpu OpenGL::GL)
 
 add_executable(render src/app/render_demo.cpp)
 target_link_libraries(render PRIVATE lsystem_cpu)
@@ -37,7 +39,6 @@ if(NOT EXISTS ${IMGUI_DIR}/imgui.cpp)
   message(FATAL_ERROR "extern/imgui is empty; run: git submodule update --init")
 endif()
 
-find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
 
 # Glob the GLFW and OpenGL dependencies explicitly

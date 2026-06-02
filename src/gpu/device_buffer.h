@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 // Frees a device allocation
 void device_free(void *p) noexcept;
 
@@ -9,9 +11,18 @@ template <class T> struct device_buffer {
   int size = 0;
 
   device_buffer(T *data = nullptr, int size = 0) : data(data), size(size) {}
+
   device_buffer(device_buffer &&o) noexcept : data(o.data), size(o.size) {
     o.data = nullptr;
   }
+
   device_buffer(const device_buffer &) = delete;
+
+  device_buffer &operator=(device_buffer &&o) noexcept {
+    std::swap(data, o.data);
+    std::swap(size, o.size);
+    return *this;
+  }
+
   ~device_buffer() { device_free(data); }
 };

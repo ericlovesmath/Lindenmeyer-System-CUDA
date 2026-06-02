@@ -104,6 +104,27 @@ void test_gpu_matches_cpu() {
   }
 }
 
+// interpret_to_frames  must agree with the segment path
+void test_frames_match_segments() {
+  const example *cases[] = {&koch, &dragon, &hilbert, &sierpinski};
+  for (const example *e : cases) {
+    for (int n = 0; n <= 6; ++n) {
+      std::string commands = expand(e->sys, n);
+      auto segs = interpret(commands, e->cfg);
+      auto frames = interpret_frames_gpu(commands, e->cfg);
+      EXPECT_EQ(frames.size(), segs.size());
+      float tol = static_cast<float>(1e-4 * extent(segs));
+      double step = e->cfg.step;
+      for (std::size_t i = 0; i < segs.size(); ++i) {
+        EXPECT_NEAR(frames[i].tx, segs[i].a.x, tol);
+        EXPECT_NEAR(frames[i].ty, segs[i].a.y, tol);
+        EXPECT_NEAR(frames[i].tx + step * frames[i].c, segs[i].b.x, tol);
+        EXPECT_NEAR(frames[i].ty + step * frames[i].s, segs[i].b.y, tol);
+      }
+    }
+  }
+}
+
 void test_single_forward() {
   turtle_config cfg{2.0, 90.0, 30.0};
   auto segs = interpret_gpu("F", cfg);
@@ -145,6 +166,7 @@ int main() {
   test_rotation_direction();
   test_bracket_restores_heading();
   test_gpu_matches_cpu();
+  test_frames_match_segments();
   test_single_forward();
   test_degenerate();
   test_bracketed_fallback();

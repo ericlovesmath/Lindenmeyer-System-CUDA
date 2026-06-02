@@ -8,6 +8,10 @@ struct segment {
   pos a, b;
 };
 
+struct gpu_frame {
+  float tx, ty, c, s;
+};
+
 struct turtle_config {
   double step = 1.0;              // length of F move
   double angle_deg = 90.0;        // turn angle delta for + and -
