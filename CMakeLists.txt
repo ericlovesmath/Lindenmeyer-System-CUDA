@@ -18,7 +18,8 @@ add_library(lsystem_cpu STATIC
   src/cpu/expand.cpp src/cpu/interpret.cpp src/cpu/image.cpp src/cpu/examples.cpp)
 
 add_library(lsystem_gpu STATIC
-  src/gpu/pool.cu src/gpu/expand.cu src/gpu/interpret.cu src/gpu/gl_interop.cu)
+  src/gpu/pool.cu src/gpu/expand.cu src/gpu/interpret.cu
+  src/gpu/bracket_resolve.cu src/gpu/gl_interop.cu)
 target_link_libraries(lsystem_gpu PRIVATE OpenGL::GL)
 
 add_executable(render src/app/render_demo.cpp)
