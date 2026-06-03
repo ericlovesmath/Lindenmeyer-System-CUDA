@@ -245,7 +245,7 @@ void frame_renderer::fill_from_device(
     reserve(commands.size); // size for up to n frames; may clear interop
   if (interop_) {
     gpu_frame *dst = map_frames(reg_);
-    frames_view r = interpret_to_frames(commands, cfg, dst, capacity_);
+    frames_view r = interpret_to_frames(commands, cfg, dst);
     unmap(reg_);
     count_ = static_cast<GLsizei>(r.count);
     bbox_ = r.bbox;

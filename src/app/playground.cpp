@@ -25,10 +25,6 @@
 
 namespace {
 
-// Examples selectable from the playground UI, in display order.
-const example *examples[] = {&koch,    &plant,      &dragon,
-                             &hilbert, &sierpinski, &bush};
-
 // Iteration cap for the slider
 constexpr int MAX_ITERS = 10;
 
@@ -128,7 +124,7 @@ GLFWwindow *init_window() {
 bool controls_panel(int &example_idx, controls &ctl, const render_stats &stats,
                     const frame_renderer &lines, double raster_ms,
                     std::string &ppm_path, bool &save) {
-  const example *current = examples[example_idx];
+  const example *current = all_examples[example_idx];
   bool dirty = false;
 
   ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
@@ -136,11 +132,11 @@ bool controls_panel(int &example_idx, controls &ctl, const render_stats &stats,
   ImGui::Begin("Controls");
   ImGui::PushItemWidth(ImGui::CalcItemWidth() * 0.7f);
   if (ImGui::BeginCombo("example", current->name.c_str())) {
-    for (int i = 0; i < static_cast<int>(std::size(examples)); ++i) {
+    for (int i = 0; i < static_cast<int>(example_count); ++i) {
       bool selected = i == example_idx;
-      if (ImGui::Selectable(examples[i]->name.c_str(), selected)) {
+      if (ImGui::Selectable(all_examples[i]->name.c_str(), selected)) {
         example_idx = i;
-        ctl = defaults_for(*examples[i]);
+        ctl = defaults_for(*all_examples[i]);
         dirty = true;
       }
       if (selected)
@@ -148,7 +144,7 @@ bool controls_panel(int &example_idx, controls &ctl, const render_stats &stats,
     }
     ImGui::EndCombo();
   }
-  current = examples[example_idx];
+  current = all_examples[example_idx];
 
   dirty |= ImGui::SliderInt("iterations", &ctl.iterations, 0, MAX_ITERS);
   dirty |= ImGui::SliderFloat("angle (deg)", &ctl.angle_deg, 0.0f, 180.0f);
@@ -190,16 +186,16 @@ int main() {
         "[playground] CUDA/GL interop unavailable using host-copy upload.\n");
 
   int example_idx = 0;
-  controls ctl = defaults_for(*examples[example_idx]);
+  controls ctl = defaults_for(*all_examples[example_idx]);
   camera2d cam2;
   camera3d cam3;
   double raster_ms = 0.0; // per-frame draw time, exponential moving average
 
   // Warm up CUDA initialization, then build the first drawing.
   {
-    device_buffer<unsigned char> warm = expand_device(examples[0]->sys, 1);
+    device_buffer<unsigned char> warm = expand_device(all_examples[0]->sys, 1);
   }
-  render_stats stats = recompute(*examples[example_idx], ctl, lines);
+  render_stats stats = recompute(*all_examples[example_idx], ctl, lines);
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -211,7 +207,7 @@ int main() {
     bool save = false;
     bool dirty = controls_panel(example_idx, ctl, stats, lines, raster_ms,
                                 ppm_path, save);
-    const example *current = examples[example_idx];
+    const example *current = all_examples[example_idx];
     const bool d3 = current->three_d;
 
     if (dirty)

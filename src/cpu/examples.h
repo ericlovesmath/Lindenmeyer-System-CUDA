@@ -10,9 +10,9 @@
 struct example {
   std::string name;
   l_system sys;
-  int iterations;     // iteration depth used by the render demo
-  turtle_config cfg;  // step, turn angle, start heading
-  color line;         // line color for the rasterized image
+  int iterations;       // iteration depth used by the render demo
+  turtle_config cfg;    // step, turn angle, start heading
+  color line;           // line color for the rasterized image
   bool three_d = false; // true if the system leaves the plane (orbit view)
 };
 
@@ -23,3 +23,7 @@ extern const example dragon;
 extern const example hilbert;
 extern const example sierpinski;
 extern const example bush;
+
+// All built-in examples, in display order
+extern const example *const all_examples[];
+extern const int example_count;

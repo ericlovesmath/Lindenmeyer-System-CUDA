@@ -22,11 +22,9 @@ device_buffer<segment>
 interpret_device(const device_buffer<unsigned char> &commands,
                  const turtle_config &cfg);
 
-// Interpret a (non-bracketed) device command string, writing one float
-// `gpu_frame` per drawn `F` directly into `out`
+// Interpret a device command string
 frames_view interpret_to_frames(const device_buffer<unsigned char> &commands,
-                                const turtle_config &cfg, gpu_frame *out,
-                                int out_capacity);
+                                const turtle_config &cfg, gpu_frame *out);
 
 // Same, but for when CUDA/GL interop is unavailable
 frames_view

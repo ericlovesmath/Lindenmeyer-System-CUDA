@@ -1,6 +1,7 @@
 #include "gpu/expand.h"
 
 #include "gpu/cuda_check.h"
+#include "gpu/kernel.h"
 
 #include <cuda_runtime.h>
 #include <thrust/execution_policy.h>
@@ -8,22 +9,11 @@
 
 #include <array>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace {
 
 constexpr int ALPHABET = 256;
-constexpr int BLOCK = 256;
-
-int grid_for(int n) { return (n + BLOCK - 1) / BLOCK; }
-
-// Launch a grid-strided kernel over `n` items and check
-template <typename Kernel, typename... Args>
-void launch(const char *name, Kernel kernel, int n, Args... args) {
-  kernel<<<grid_for(n), BLOCK>>>(args...);
-  check(cudaGetLastError(), name);
-}
 
 // Flattened, branch-free production table
 struct rule_table {
@@ -61,10 +51,7 @@ struct device_rules {
 // len[i] = replacement length of input symbol i
 __global__ void length_kernel(const unsigned char *in, int n,
                               const int *rule_len, int *len) {
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
-       i += blockDim.x * gridDim.x) {
-    len[i] = rule_len[in[i]];
-  }
+  GRID_STRIDE_LOOP(i, n) { len[i] = rule_len[in[i]]; }
 }
 
 // Copy each input symbol's replacement into its scanned output offset
@@ -72,8 +59,7 @@ __global__ void scatter_kernel(const unsigned char *in, int n,
                                const int *rule_off, const int *rule_len,
                                const char *rule_data, const int *offset,
                                unsigned char *out) {
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
-       i += blockDim.x * gridDim.x) {
+  GRID_STRIDE_LOOP(i, n) {
     unsigned char c = in[i];
     const char *src = rule_data + rule_off[c];
     unsigned char *dst = out + offset[i];
@@ -113,37 +99,6 @@ unsigned char *expand_step(const unsigned char *in, int n,
 }
 
 } // namespace
-
-namespace {
-// Freed device blocks kept for reuse, bucketed by exact byte size
-std::unordered_map<std::size_t, std::vector<void *>> pool;
-std::unordered_map<void *, std::size_t> block_size;
-} // namespace
-
-void *pool_alloc(std::size_t bytes) {
-  auto &bin = pool[bytes];
-  if (!bin.empty()) {
-    void *p = bin.back();
-    bin.pop_back();
-    return p;
-  }
-  void *p = nullptr;
-  check(cudaMalloc(&p, bytes), "cudaMalloc");
-  block_size[p] = bytes;
-  return p;
-}
-
-void device_free(void *p) noexcept {
-  if (!p) {
-    return;
-  }
-  auto it = block_size.find(p);
-  if (it != block_size.end()) {
-    pool[it->second].push_back(p);
-  } else {
-    cudaFree(p);
-  }
-}
 
 device_buffer<unsigned char> to_device(const std::string &s) {
   const int n = static_cast<int>(s.size());

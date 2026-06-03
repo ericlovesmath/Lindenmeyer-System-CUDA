@@ -26,12 +26,10 @@ void render(const example &e, const std::string &path) {
 int main(int argc, char **argv) {
   std::string out_dir = argc > 1 ? argv[1] : ".";
 
-  render(koch, out_dir + "/koch.ppm");
-  render(plant, out_dir + "/plant.ppm");
-  render(dragon, out_dir + "/dragon.ppm");
-  render(hilbert, out_dir + "/hilbert.ppm");
-  render(sierpinski, out_dir + "/sierpinski.ppm");
-  render(bush, out_dir + "/bush.ppm");
+  for (int i = 0; i < example_count; ++i) {
+    const example &e = *all_examples[i];
+    render(e, out_dir + "/" + e.name + ".ppm");
+  }
 
   return 0;
 }

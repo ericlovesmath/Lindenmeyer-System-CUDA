@@ -1,5 +1,7 @@
 #include "cpu/examples.h"
 
+#include <iterator> // std::size
+
 // Koch snowflake
 const example koch{
     "koch", {"F++F++F", {{'F', "F-F++F-F"}}}, 8, {1.0, 60.0, 0.0}, {0, 0, 0}};
@@ -39,3 +41,7 @@ const example bush{"bush",
                    {1.0, 22.5, 90.0},
                    {70, 120, 40},
                    true};
+
+const example *const all_examples[] = {&koch,    &plant,      &dragon,
+                                       &hilbert, &sierpinski, &bush};
+const int example_count = static_cast<int>(std::size(all_examples));

@@ -2,8 +2,9 @@
 
 #include "gpu/cuda_check.h" // check(), device_alloc(), download()
 #include "gpu/expand.h"     // to_device() for the host-string convenience
+#include "gpu/kernel.h"     // BLOCK, launch(), GRID_STRIDE_LOOP
 
-#include "core/quat.h"
+#include "core/turtle_commands.h" // classify(), radians(), heading_axis(), ...
 
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
@@ -30,37 +31,11 @@
 
 namespace {
 
-constexpr double PI = 3.14159265358979323846;
-
-constexpr double radians(double degrees) { return degrees * PI / 180.0; }
-
-constexpr int BLOCK = 256;
-int grid_for(int n) { return (n + BLOCK - 1) / BLOCK; }
-
-// Launch a grid-strided kernel over `n` items and check
-template <typename Kernel, typename... Args>
-void launch(const char *name, Kernel kernel, int n, Args... args) {
-  if (n <= 0)
-    return;
-  kernel<<<grid_for(n), BLOCK>>>(args...);
-  check(cudaGetLastError(), name);
-}
-
-// Every kernel below walks its range with this grid-stride loop.
-#define GRID_STRIDE_LOOP(i, n)                                                 \
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < (n);                 \
-       i += blockDim.x * gridDim.x)
-
 // Shorthands used throughout: a device_ptr cast and the async execution policy.
 template <class T> thrust::device_ptr<T> dptr(T *p) {
   return thrust::device_pointer_cast(p);
 }
 const auto par = thrust::cuda::par_nosync;
-
-// Turtle local frame axes
-__host__ __device__ constexpr vec3 HEADING() { return {1.0, 0.0, 0.0}; }
-__host__ __device__ constexpr vec3 LEFT() { return {0.0, 1.0, 0.0}; }
-__host__ __device__ constexpr vec3 UP() { return {0.0, 0.0, 1.0}; }
 
 // A rigid transform in SE(3)
 struct frame3 {
@@ -82,31 +57,17 @@ __host__ __device__ inline frame3 rot(vec3 axis, double angle) {
   return {quat_axis_angle(axis, angle), 0.0, 0.0, 0.0};
 }
 
-// Map a symbol to its local transform
+// Map a symbol to its local transform. Brackets and ignored symbols contribute
+// the identity (the bracket structure itself is handled by the tree resolver).
 struct to_local {
   double step, delta;
   __host__ __device__ frame3 operator()(unsigned char ch) const {
-    switch (ch) {
-    case 'F':
-    case 'f':
+    turtle_action a = classify(ch, delta);
+    if (a.op == turtle_op::move)
       return {{1.0, 0.0, 0.0, 0.0}, step, 0.0, 0.0};
-    case '+':
-      return rot(UP(), delta);
-    case '-':
-      return rot(UP(), -delta);
-    case '&':
-      return rot(LEFT(), delta);
-    case '^':
-      return rot(LEFT(), -delta);
-    case '/':
-      return rot(HEADING(), delta);
-    case '\\':
-      return rot(HEADING(), -delta);
-    case '|':
-      return rot(UP(), 3.14159265358979323846);
-    default:
-      return {{1.0, 0.0, 0.0, 0.0}, 0.0, 0.0, 0.0};
-    }
+    if (a.op == turtle_op::turn)
+      return rot(a.axis, a.angle);
+    return {{1.0, 0.0, 0.0, 0.0}, 0.0, 0.0, 0.0};
   }
 };
 
@@ -114,7 +75,7 @@ struct to_local {
 struct to_segment {
   double step;
   __host__ __device__ segment operator()(const frame3 &w) const {
-    vec3 h = qrotate(w.q, HEADING());
+    vec3 h = qrotate(w.q, heading_axis());
     return {{w.px, w.py, w.pz},
             {w.px + step * h.x, w.py + step * h.y, w.pz + step * h.z}};
   }
@@ -143,7 +104,7 @@ void scan_world(const device_buffer<unsigned char> &commands,
   const double delta = radians(cfg.angle_deg),
                h = radians(cfg.start_heading_deg);
   const to_local local{cfg.step, delta};
-  const frame3 init{quat_axis_angle(UP(), h), 0.0, 0.0, 0.0};
+  const frame3 init{quat_axis_angle(up_axis(), h), 0.0, 0.0, 0.0};
   auto locals = thrust::make_transform_iterator(dptr(commands.data), local);
   thrust::exclusive_scan(par, locals, locals + n, dptr(world), init, compose{});
 }
@@ -207,7 +168,7 @@ struct frame_extent {
   float step;
   __host__ __device__ bounds3 operator()(const gpu_frame &f) const {
     quat q{f.qw, f.qx, f.qy, f.qz};
-    vec3 h = qrotate(q, HEADING());
+    vec3 h = qrotate(q, heading_axis());
     float ex = f.px + step * static_cast<float>(h.x);
     float ey = f.py + step * static_cast<float>(h.y);
     float ez = f.pz + step * static_cast<float>(h.z);
@@ -388,7 +349,7 @@ void scan_world_bracketed(const device_buffer<unsigned char> &commands,
   const frame3 *entry = resolve_entries(commands, maxdepth);
 
   const double h = radians(cfg.start_heading_deg);
-  const frame3 init{quat_axis_angle(UP(), h), 0.0, 0.0, 0.0};
+  const frame3 init{quat_axis_angle(up_axis(), h), 0.0, 0.0, 0.0};
   launch("world_b", world_b_kernel, n, n, g.branch.data, entry, g.prefix.data,
          init, world);
   check(cudaDeviceSynchronize(), "scan_world_bracketed");
@@ -422,9 +383,9 @@ interpret_device(const device_buffer<unsigned char> &commands,
 }
 
 frames_view interpret_to_frames(const device_buffer<unsigned char> &commands,
-                                const turtle_config &cfg, gpu_frame *out,
-                                int out_capacity) {
-  (void)out_capacity;
+                                const turtle_config &cfg, gpu_frame *out) {
+  // `out` must hold at least commands.size frames (the caller's contract): the
+  // turtle emits one frame per drawn 'F', and there are at most commands.size.
   int count = scan_and_emit(commands, cfg, out, to_frame{});
   return {out, count, frames_bounds(out, count, static_cast<float>(cfg.step))};
 }
@@ -434,7 +395,7 @@ interpret_frames_fallback(const device_buffer<unsigned char> &commands,
                           const turtle_config &cfg) {
   // Everything on the GPU except the D2H copy into pinned memory
   gpu_frame *dev = grow(g.frames, commands.size);
-  frames_view r = interpret_to_frames(commands, cfg, dev, commands.size);
+  frames_view r = interpret_to_frames(commands, cfg, dev);
   download(g.host_ptr(r.count > 0 ? r.count : 1), dev, r.count);
   return {g.host, r.count, r.bbox};
 }
