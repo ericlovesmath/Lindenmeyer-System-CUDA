@@ -1,4 +1,4 @@
-.PHONY: all build render playground bench test clean
+.PHONY: all build render playground bench profile test clean
 MAKEFLAGS += --no-print-directory
 
 all: build
@@ -17,6 +17,9 @@ playground: build
 
 bench: build
 	@./build/bench
+
+profile: build
+	@scripts/ncu.sh
 
 test: build
 	@ctest --test-dir build --output-on-failure

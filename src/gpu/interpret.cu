@@ -3,6 +3,7 @@
 #include "gpu/turtle_engine.h"
 
 #include "gpu/expand.h"
+#include "gpu/nvtx.h"
 
 #include <thrust/copy.h>
 #include <thrust/count.h>
@@ -88,6 +89,7 @@ bounds3 frames_bounds(const gpu_frame *frames, int count, float step) {
 // Flat world fill: a matrix prefix scan with the associative `compose`.
 void scan_world(const device_buffer<unsigned char> &commands,
                 const turtle_config &cfg, frame3 *world) {
+  NVTX_RANGE("world-scan");
   const int n = commands.size;
   const frame3 init{quat_axis_angle(up_axis(), radians(cfg.start_heading_deg)),
                     0.0, 0.0, 0.0};
@@ -126,10 +128,15 @@ int turtle_engine::scan_and_emit(const device_buffer<unsigned char> &commands,
   else
     scan_world(commands, cfg, w);
   auto frames = thrust::make_transform_iterator(dptr(w), xform);
-  auto end =
-      thrust::copy_if(par, frames, frames + n, cmd, dptr(out), is_forward{});
+  int count;
+  {
+    NVTX_RANGE("emit");
+    auto end =
+        thrust::copy_if(par, frames, frames + n, cmd, dptr(out), is_forward{});
+    count = static_cast<int>(end - dptr(out));
+  }
   check(cudaDeviceSynchronize(), "sync");
-  return static_cast<int>(end - dptr(out));
+  return count;
 }
 
 device_buffer<segment>

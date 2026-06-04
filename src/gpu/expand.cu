@@ -2,6 +2,7 @@
 
 #include "gpu/cuda_check.h"
 #include "gpu/kernel.h"
+#include "gpu/nvtx.h"
 
 #include <cuda_runtime.h>
 #include <thrust/execution_policy.h>
@@ -129,6 +130,7 @@ device_buffer<unsigned char> expand_device(const l_system &sys,
 
   // Each step hands back a freshly sized buffer.
   for (int it = 0; it < iterations && n > 0; ++it) {
+    NVTX_RANGE("expand-step");
     int next_n = 0;
     unsigned char *next = expand_step(cur, n, rules, &next_n);
     device_free(cur);

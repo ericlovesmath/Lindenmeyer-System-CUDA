@@ -3,6 +3,7 @@
 #include "gpu/turtle_engine.h"
 
 #include "gpu/kernel.h"
+#include "gpu/nvtx.h"
 
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
@@ -107,6 +108,7 @@ __global__ void world_b_kernel(int n, const int *branch, const frame3 *acc,
 // branch[i] = innermost enclosing '['. Returns the bracket tree's height.
 int bracket_scratch::resolve_branches(
     const device_buffer<unsigned char> &commands) {
+  NVTX_RANGE("brk-branches");
   const int n = commands.size;
   const long long n1 = static_cast<long long>(n) + 1;
   auto cmd = dptr(commands.data);
@@ -139,6 +141,7 @@ int bracket_scratch::resolve_branches(
 // prefix[i] = the within-branch exclusive compose-scan of the local transforms.
 void bracket_scratch::resolve_prefix(
     const device_buffer<unsigned char> &commands, const turtle_config &cfg) {
+  NVTX_RANGE("brk-prefix");
   const int n = commands.size;
   auto locals = thrust::make_transform_iterator(
       dptr(commands.data), to_local{cfg.step, radians(cfg.angle_deg)});
@@ -160,6 +163,7 @@ void bracket_scratch::resolve_prefix(
 frame3 *
 bracket_scratch::resolve_entries(const device_buffer<unsigned char> &commands,
                                  int maxdepth) {
+  NVTX_RANGE("brk-entries");
   const int n = commands.size;
   frame3 *a = grow(accA, n), *b = grow(accB, n);
   int *ja = grow(jumpA, n), *jb = grow(jumpB, n);
@@ -182,6 +186,7 @@ turtle_engine::~turtle_engine() {
 void turtle_engine::fill_world_bracketed(
     const device_buffer<unsigned char> &commands, const turtle_config &cfg,
     frame3 *world) {
+  NVTX_RANGE("brk-world");
   const int n = commands.size;
   if (n <= 0)
     return;
