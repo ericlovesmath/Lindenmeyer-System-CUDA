@@ -13,6 +13,7 @@ set(CMAKE_CUDA_ARCHITECTURES native)
 include_directories(src)
 find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
+find_package(CUDAToolkit REQUIRED) # CUDA::nvtx3 (header-only NVTX stage ranges)
 
 add_library(lsystem_cpu STATIC
   src/cpu/expand.cpp src/cpu/interpret.cpp src/cpu/image.cpp src/cpu/examples.cpp)
@@ -20,13 +21,22 @@ add_library(lsystem_cpu STATIC
 add_library(lsystem_gpu STATIC
   src/gpu/pool.cu src/gpu/expand.cu src/gpu/interpret.cu
   src/gpu/bracket_resolve.cu src/gpu/gl_interop.cu)
-target_link_libraries(lsystem_gpu PRIVATE OpenGL::GL)
+target_link_libraries(lsystem_gpu PRIVATE OpenGL::GL CUDA::nvtx3)
+
+# -lineinfo lets Nsight Compute map metrics back to source lines while keeping
+# the optimized Release device code (unlike -G, which would distort the metrics).
+target_compile_options(lsystem_gpu PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 
 add_executable(render src/app/render_demo.cpp)
 target_link_libraries(render PRIVATE lsystem_cpu)
 
 add_executable(bench src/app/bench.cpp)
 target_link_libraries(bench PRIVATE lsystem_cpu lsystem_gpu)
+
+# Deterministic single-shot driver for Nsight Compute
+add_executable(profile src/app/profile.cpp)
+target_link_libraries(profile PRIVATE lsystem_cpu lsystem_gpu CUDA::nvtx3)
 
 # Playground: ImGui ships as loose .cpp files compiled straight from the submodule.
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui)

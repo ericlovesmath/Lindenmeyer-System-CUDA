@@ -24,9 +24,8 @@
 
           cuda.cuda_nvcc
           cuda.cuda_cudart
-          cuda.cuda_cccl # Thrust
-          cuda.cuda_nvtx
-          cuda.nsight_compute
+          cuda.cuda_cccl # Thrust / CUB
+          cuda.nsight_compute # `ncu` for `make profile`
 
           glfw
           libGL
