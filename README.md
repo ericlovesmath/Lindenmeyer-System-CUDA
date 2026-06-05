@@ -1,7 +1,5 @@
 # GPU-Accelerated L-Systems for Botanical Structures
 
-*CS 179 final project*
-
 GPU-accelerated [L-system](https://en.wikipedia.org/wiki/L-system) evaluation and
 rendering. An L-system rewrites a string of symbols under a set of
 production rules, and a turtle interpreter then walks the resulting string to emit line
@@ -16,7 +14,7 @@ Generated images with `make render`:
 
 Note that `plant` and `bush` are both bracketed L-systems and `bush` is three dimensional.
 
-A full [Demo Recording](./docs/demo.mp4) of `make playground` is available!
+A full [demo recording](./figs/demo.mp4) of `make playground` is available!
 
 ## Installation
 
