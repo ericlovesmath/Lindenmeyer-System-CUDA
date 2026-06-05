@@ -14,7 +14,9 @@ Generated images with `make render`:
 
 Note that `plant` and `bush` are both bracketed L-systems and `bush` is three dimensional.
 
-A full [demo recording](./figs/demo.mp4) of `make playground` is available!
+A full [demo recording](./figs/demo.mp4) of `make playground` is available, preview image:
+
+![Playground Demo](./figs/playground_demo.png)
 
 ## Installation
 
