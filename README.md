@@ -6,17 +6,15 @@ production rules, and a turtle interpreter then walks the resulting string to em
 segments, which are rasterized. The exponential string rewriting, turtle transform
 accumulation, and rasterization can run entirely on the GPU.
 
-## Demo
+A full [demo recording](./figs/demo.mp4) of `make playground` is available, preview screenshot:
+
+![Playground Demo](./figs/playground_demo.png)
 
 Generated images with `make render`:
 
 ![Examples](./figs/examples_grid.png)
 
 Note that `plant` and `bush` are both bracketed L-systems and `bush` is three dimensional.
-
-A full [demo recording](./figs/demo.mp4) of `make playground` is available, preview image:
-
-![Playground Demo](./figs/playground_demo.png)
 
 ## Installation
 
