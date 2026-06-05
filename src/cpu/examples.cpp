@@ -23,7 +23,7 @@ const example dragon{"dragon",
 // Hilbert space-filling curve
 const example hilbert{"hilbert",
                       {"X", {{'X', "+YF-XFX-FY+"}, {'Y', "-XF+YFY+FX-"}}},
-                      9,
+                      5,
                       {1.0, 90.0, 0.0},
                       {30, 60, 160}};
 
